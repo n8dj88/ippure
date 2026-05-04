@@ -1,6 +1,7 @@
 export interface Env {
   ASSETS: { fetch: typeof fetch };
-  IPPURE_CHATS: KVNamespace;
+  db: D1Database;
+  kv: KVNamespace;
 }
 
 const HTML_PAGES: Record<string, string> = {
@@ -99,11 +100,11 @@ async function handleResolve(request: Request, env: Env, ctx: ExecutionContext):
     '主要出口 IPv4': { ip: '222.247.147.212', location: '🇨🇳 中国，湖南省，长沙市' },
     'itdog IPv4': { ip: '222.247.147.212', location: '🇨🇳 中国，湖南省，长沙市' },
     '网易': { ip: '223.111.194.114', location: '🇨🇳 中国，广东省，广州市' },
-    'openai.com': { ip: '104.18.123.222', location: '🇺🇸 美国，加利福尼亚州，旧金山' },
-    'claude.ai': { ip: '35.185.44.189', location: '🇺🇸 美国，俄勒冈州，博德曼' },
-    'cloudflare.com': { ip: '104.16.132.229', location: '🇺🇸 美国，加利福尼亚州，旧金山' },
-    'gitlab.com': { ip: '172.65.251.78', location: '🇺🇸 美国，加利福尼亚州，旧金山' },
-    'nodejs.org': { ip: '104.20.23.46', location: '🇺🇸 美国，加利福尼亚州，旧金山' },
+    'openai.com': { ip: '104.18.123.222', location: '🇺🇸 美国，加利福尼亚州，旧金�? },
+    'claude.ai': { ip: '35.185.44.189', location: '🇺🇸 美国，俄勒冈州，博德�? },
+    'cloudflare.com': { ip: '104.16.132.229', location: '🇺🇸 美国，加利福尼亚州，旧金�? },
+    'gitlab.com': { ip: '172.65.251.78', location: '🇺🇸 美国，加利福尼亚州，旧金�? },
+    'nodejs.org': { ip: '104.20.23.46', location: '🇺🇸 美国，加利福尼亚州，旧金�? },
   };
 
   const result = mockResults[domain] || { ip: '8.8.8.8', location: '🇺🇸 美国' };
@@ -116,37 +117,80 @@ async function handleResolve(request: Request, env: Env, ctx: ExecutionContext):
   });
 }
 
+async function hashPassword(password: string): Promise<{ salt: string; hash: string }> {
+  const salt = generateSalt(16);
+  const hash = await genHashPassword(password, salt);
+  return { salt, hash };
+}
+
+function generateSalt(length: number): string {
+  const array = new Uint8Array(length);
+  crypto.getRandomValues(array);
+  return btoa(String.fromCharCode(...array));
+}
+
+async function genHashPassword(password: string, salt: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(salt + password);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return btoa(String.fromCharCode(...hashArray));
+}
+
+async function verifyPassword(inputPassword: string, salt: string, storedHash: string): Promise<boolean> {
+  const hash = await genHashPassword(inputPassword, salt);
+  return hash === storedHash;
+}
+
 async function handleChatLogin(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const url = new URL(request.url);
   const email = url.searchParams.get('email');
   const password = url.searchParams.get('password');
   
   if (!email || !password) {
-    return new Response(JSON.stringify({ error: '缺少邮箱或密码' }), {
+    return new Response(JSON.stringify({ error: '缺少邮箱或密�? }), {
       status: 400,
       headers: { 'Content-Type': 'application/json' }
     });
   }
   
   try {
-    const response = await fetch('https://mail.ygyang.uk/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password })
-    });
+    const result = await env.db.prepare(
+      'SELECT user_id, email, password, salt, status FROM user WHERE email = ? AND is_del = 0'
+    ).bind(email).first();
     
-    if (!response.ok) {
-      return new Response(JSON.stringify({ error: '登录失败，请检查邮箱和密码' }), {
+    if (!result) {
+      return new Response(JSON.stringify({ error: '用户不存�? }), {
         status: 401,
         headers: { 'Content-Type': 'application/json' }
       });
     }
     
-    const data = await response.json();
+    const isValid = await verifyPassword(password, result.salt as string, result.password as string);
+    
+    if (!isValid) {
+      return new Response(JSON.stringify({ error: '密码错误' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    
+    if (result.status === 1) {
+      return new Response(JSON.stringify({ error: '账户已被禁用' }), {
+        status: 403,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    
+    const token = btoa(JSON.stringify({ userId: result.user_id, email: result.email, exp: Date.now() + 7 * 24 * 60 * 60 * 1000 }));
+    
     return new Response(JSON.stringify({ 
       success: true, 
-      token: data.token,
-      user: data.user 
+      token: token,
+      user: { 
+        id: result.user_id, 
+        email: result.email 
+      }
     }), {
       headers: { 'Content-Type': 'application/json' }
     });
@@ -177,15 +221,15 @@ async function handleChatMessages(request: Request, env: Env, ctx: ExecutionCont
   const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
   
   try {
-    const list = await env.IPPURE_CHATS.list({ prefix: userId + ':' });
+    const list = await env.kv.list({ prefix: userId + ':' });
     const messages = [];
     
     for (const key of list.keys) {
-      const message = await env.IPPURE_CHATS.get(key.name, 'json');
+      const message = await env.kv.get(key.name, 'json');
       if (message && message.timestamp > sevenDaysAgo) {
         messages.push(message);
       } else if (message) {
-        await env.IPPURE_CHATS.delete(key.name);
+        await env.kv.delete(key.name);
       }
     }
     
@@ -231,7 +275,7 @@ async function handleChatSend(request: Request, env: Env, ctx: ExecutionContext)
     };
     
     const key = `${userId}:${message.id}`;
-    await env.IPPURE_CHATS.put(key, JSON.stringify(message));
+    await env.kv.put(key, JSON.stringify(message));
     
     await cleanupOldMessages(env);
     
@@ -239,7 +283,7 @@ async function handleChatSend(request: Request, env: Env, ctx: ExecutionContext)
       headers: { 'Content-Type': 'application/json' }
     });
   } catch (error) {
-    return new Response(JSON.stringify({ error: '发送消息失败' }), {
+    return new Response(JSON.stringify({ error: '发送消息失�? }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' }
     });
@@ -259,16 +303,16 @@ async function handleChatHistory(request: Request, env: Env, ctx: ExecutionConte
   const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
   
   try {
-    const list = await env.IPPURE_CHATS.list({ prefix: userId + ':' });
+    const list = await env.kv.list({ prefix: userId + ':' });
     const messages = [];
     
     for (const key of list.keys) {
-      const message = await env.IPPURE_CHATS.get(key.name, 'json');
+      const message = await env.kv.get(key.name, 'json');
       if (message) {
         if (message.timestamp > sevenDaysAgo) {
           messages.push(message);
         } else {
-          await env.IPPURE_CHATS.delete(key.name);
+          await env.kv.delete(key.name);
         }
       }
     }
@@ -278,7 +322,7 @@ async function handleChatHistory(request: Request, env: Env, ctx: ExecutionConte
     return new Response(JSON.stringify({ 
       messages,
       retentionDays: 7,
-      cleanupInfo: '超过7天的消息将自动删除'
+      cleanupInfo: '超过7天的消息将自动删�?
     }), {
       headers: { 'Content-Type': 'application/json' }
     });
@@ -292,17 +336,17 @@ async function handleChatHistory(request: Request, env: Env, ctx: ExecutionConte
 
 async function cleanupOldMessages(env: Env): Promise<void> {
   try {
-    const list = await env.IPPURE_CHATS.list();
+    const list = await env.kv.list();
     const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
     
     for (const key of list.keys) {
-      const message = await env.IPPURE_CHATS.get(key.name, 'json');
+      const message = await env.kv.get(key.name, 'json');
       if (message && message.timestamp < sevenDaysAgo) {
-        await env.IPPURE_CHATS.delete(key.name);
+        await env.kv.delete(key.name);
       }
     }
   } catch (error) {
-    console.error('清理旧消息失败:', error);
+    console.error('清理旧消息失�?', error);
   }
 }
 
@@ -332,7 +376,7 @@ function getCountryName(countryCode: string): string {
   const countries: Record<string, string> = {
     'CN': '中国', 'US': '美国', 'JP': '日本', 'KR': '韩国',
     'GB': '英国', 'DE': '德国', 'FR': '法国', 'AU': '澳大利亚',
-    'CA': '加拿大', 'SG': '新加坡', 'HK': '香港', 'TW': '台湾',
+    'CA': '加拿�?, 'SG': '新加�?, 'HK': '香港', 'TW': '台湾',
     'XX': '未知'
   };
   return countries[countryCode] || countryCode;
@@ -394,7 +438,7 @@ function getDefaultPage(path: string): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>IPPure - IP纯净度检测</title>
+  <title>IPPure - IP纯净度检�?/title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <style>
@@ -454,17 +498,17 @@ function getDefaultPage(path: string): string {
     <nav>
       <a href="/" class="logo">IPPure</a>
       <ul>
-        <li><a href="/">IP检测</a></li>
-        <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
+        <li><a href="/">IP检�?/a></li>
+        <li><a href="/IP-Outbound-Detect.html">出口检�?/a></li>
         <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
-        <li><a href="/fingerprint.html">指纹检测</a></li>
+        <li><a href="/fingerprint.html">指纹检�?/a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
     </nav>
   </header>
   <main class="container">
     <section class="hero">
-      <h1>IP纯净度检测</h1>
+      <h1>IP纯净度检�?/h1>
       <p>专业检测IP类型、风险系数、出口分布，确保网络隐私安全</p>
       <button class="detect-btn" id="detectBtn">
         <span id="btnText">开始检测我的IP</span>
@@ -532,12 +576,12 @@ function getDefaultPage(path: string): string {
         <p>整合IP2Location、DB-IP、MaxMind、IPIP等多个数据源，提供最准确的IP信息</p>
       </div>
       <div class="info-card">
-        <h3>VPN泄露检测</h3>
-        <p>全面检测WebRTC、DNS、出口IP分布，防止隐私泄露</p>
+        <h3>VPN泄露检�?/h3>
+        <p>全面检测WebRTC、DNS、出口IP分布，防止隐私泄�?/p>
       </div>
       <div class="info-card">
-        <h3>浏览器指纹</h3>
-        <p>检测浏览器指纹信息，评估隐私保护等级</p>
+        <h3>浏览器指�?/h3>
+        <p>检测浏览器指纹信息，评估隐私保护等�?/p>
       </div>
     </section>
   </main>
@@ -566,11 +610,11 @@ function getDefaultPage(path: string): string {
         document.getElementById('ipASN').textContent = data.asOrganization;
         
         document.getElementById('ipResidential').innerHTML = 
-          '<span class="status-badge ' + (data.isResidential ? 'status-yes' : 'status-no') + '">' + (data.isResidential ? '是' : '否') + '</span>';
+          '<span class="status-badge ' + (data.isResidential ? 'status-yes' : 'status-no') + '">' + (data.isResidential ? '�? : '�?) + '</span>';
         document.getElementById('ipBroadcast').innerHTML = 
-          '<span class="status-badge ' + (data.isBroadcast ? 'status-yes' : 'status-no') + '">' + (data.isBroadcast ? '是' : '否') + '</span>';
+          '<span class="status-badge ' + (data.isBroadcast ? 'status-yes' : 'status-no') + '">' + (data.isBroadcast ? '�? : '�?) + '</span>';
         document.getElementById('ipDataCenter').innerHTML = 
-          '<span class="status-badge ' + (data.isDataCenter ? 'status-yes' : 'status-no') + '">' + (data.isDataCenter ? '是' : '否') + '</span>';
+          '<span class="status-badge ' + (data.isDataCenter ? 'status-yes' : 'status-no') + '">' + (data.isDataCenter ? '�? : '�?) + '</span>';
         
         updateRiskChart('ippure', data.ippureCoefficient);
         updateRiskChart('cloudflare', data.cloudflareCoefficient);
@@ -584,10 +628,10 @@ function getDefaultPage(path: string): string {
         
         ipResult.classList.add('active');
       } catch (error) {
-        alert('检测失败，请稍后重试');
+        alert('检测失败，请稍后重�?);
       } finally {
         detectBtn.disabled = false;
-        btnText.textContent = '重新检测';
+        btnText.textContent = '重新检�?;
         btnLoading.style.display = 'none';
       }
     });
@@ -734,7 +778,7 @@ function getFingerprintPage(): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>指纹检测 - IPPure</title>
+  <title>指纹检�?- IPPure</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
@@ -758,19 +802,19 @@ function getFingerprintPage(): string {
     <nav>
       <a href="/" class="logo">IPPure</a>
       <ul>
-        <li><a href="/">IP检测</a></li>
-        <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
+        <li><a href="/">IP检�?/a></li>
+        <li><a href="/IP-Outbound-Detect.html">出口检�?/a></li>
         <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
-        <li><a href="/fingerprint.html">指纹检测</a></li>
+        <li><a href="/fingerprint.html">指纹检�?/a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
     </nav>
   </header>
   <div class="container">
-    <h1>浏览器指纹检测</h1>
-    <button class="detect-btn" id="detectBtn">开始检测</button>
+    <h1>浏览器指纹检�?/h1>
+    <button class="detect-btn" id="detectBtn">开始检�?/button>
     <div class="fingerprint-data" id="fpData">
-      <div class="fp-item"><span class="fp-label">点击按钮开始检测...</span></div>
+      <div class="fp-item"><span class="fp-label">点击按钮开始检�?..</span></div>
     </div>
   </div>
   <footer>
@@ -795,11 +839,11 @@ function getFingerprintPage(): string {
         '语言': navigator.language,
         '语言列表': navigator.languages ? Array.from(navigator.languages).join(', ') : navigator.language,
         '操作系统': navigator.platform,
-        'CPU核心数': navigator.hardwareConcurrency || '未知',
+        'CPU核心�?: navigator.hardwareConcurrency || '未知',
         '设备内存': navigator.deviceMemory ? navigator.deviceMemory + ' GB' : '未知',
-        '屏幕分辨率': screen.width + ' x ' + screen.height,
-        '颜色深度': screen.colorDepth + ' 位',
-        '触摸支持': navigator.maxTouchPoints > 0 ? '支持 (' + navigator.maxTouchPoints + '点)' : '不支持'
+        '屏幕分辨�?: screen.width + ' x ' + screen.height,
+        '颜色深度': screen.colorDepth + ' �?,
+        '触摸支持': navigator.maxTouchPoints > 0 ? '支持 (' + navigator.maxTouchPoints + '�?' : '不支�?
       };
       
       const container = document.getElementById('fpData');
@@ -823,7 +867,7 @@ function getFingerprintPage(): string {
     }
     
     async function getFontPreferences() {
-      return { '默认字体': 151.7, '苹果字体': 151.7, '衬线字体': 167.5, '无衬线字体': 151.7, '等宽字体': 119 };
+      return { '默认字体': 151.7, '苹果字体': 151.7, '衬线字体': 167.5, '无衬线字�?: 151.7, '等宽字体': 119 };
     }
     
     async function getAudioFingerprint() {
@@ -879,14 +923,14 @@ function getFingerprintPage(): string {
     function getWebGLInfo() {
       const canvas = document.createElement('canvas');
       const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-      if (!gl) return { '支持': '否' };
-      return { '供应商': gl.getParameter(gl.VENDOR), '渲染器': gl.getParameter(gl.RENDERER) };
+      if (!gl) return { '支持': '�? };
+      return { '供应�?: gl.getParameter(gl.VENDOR), '渲染�?: gl.getParameter(gl.RENDERER) };
     }
     
     function getPlugins() {
-      if (!navigator.plugins) return '不支持或已禁用';
+      if (!navigator.plugins) return '不支持或已禁�?;
       const plugins = Array.from(navigator.plugins).map(p => p.name);
-      return plugins.length > 0 ? plugins.join(', ') : '无插件';
+      return plugins.length > 0 ? plugins.join(', ') : '无插�?;
     }
     
     document.getElementById('detectBtn').addEventListener('click', async () => {
@@ -898,10 +942,10 @@ function getFingerprintPage(): string {
       try {
         await detectFingerprint();
       } catch (error) {
-        container.innerHTML = '<div style="color: #ef4444;">检测失败</div>';
+        container.innerHTML = '<div style="color: #ef4444;">检测失�?/div>';
       }
       btn.disabled = false;
-      btn.textContent = '重新检测';
+      btn.textContent = '重新检�?;
     });
   </script>
 </body>
@@ -914,7 +958,7 @@ function getOutboundDetectPage(): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>出口检测 - IPPure</title>
+  <title>出口检�?- IPPure</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <style>
@@ -940,25 +984,25 @@ function getOutboundDetectPage(): string {
     <nav>
       <a href="/" class="logo">IPPure</a>
       <ul>
-        <li><a href="/">IP检测</a></li>
-        <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
+        <li><a href="/">IP检�?/a></li>
+        <li><a href="/IP-Outbound-Detect.html">出口检�?/a></li>
         <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
-        <li><a href="/fingerprint.html">指纹检测</a></li>
+        <li><a href="/fingerprint.html">指纹检�?/a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
     </nav>
   </header>
   <div class="container">
-    <h1>IP出口检测</h1>
+    <h1>IP出口检�?/h1>
     <div class="alert">全面检测IP出口分布，并在地图上显示出口IP分布</div>
-    <button class="detect-btn" id="detectBtn">开始检测</button>
+    <button class="detect-btn" id="detectBtn">开始检�?/button>
     <div id="map"></div>
     <table class="target-table">
       <thead>
-        <tr><th>目标</th><th>IP</th><th>位置</th><th>状态</th></tr>
+        <tr><th>目标</th><th>IP</th><th>位置</th><th>状�?/th></tr>
       </thead>
       <tbody id="targets">
-        <tr><td colspan="4" style="text-align:center;">点击开始检测按钮</td></tr>
+        <tr><td colspan="4" style="text-align:center;">点击开始检测按�?/td></tr>
       </tbody>
     </table>
   </div>
@@ -972,7 +1016,7 @@ function getOutboundDetectPage(): string {
   <script>
     const targets = [
       { name: '主要出口 IPv4', type: 'Global', category: 'IPv4 Only', icon: '🌐' },
-      { name: 'itdog IPv4', type: 'Web', region: 'China', category: 'IPv4 Only', icon: '🖥️' },
+      { name: 'itdog IPv4', type: 'Web', region: 'China', category: 'IPv4 Only', icon: '🖥�? },
       { name: '网易', type: 'Web', region: 'China', category: '', icon: '📰' },
       { name: 'openai.com', type: 'Web', region: 'Global', category: 'AI', icon: '🤖' },
       { name: 'claude.ai', type: 'Web', region: 'Global', category: 'AI', icon: '💬' },
@@ -1008,7 +1052,7 @@ function getOutboundDetectPage(): string {
           const data = await response.json();
           
           const row = document.createElement('tr');
-          row.innerHTML = '<td>' + target.icon + ' ' + target.name + '</td><td><a href="/?ip=' + data.ip + '" target="_blank">' + data.ip + '</a></td><td>' + data.location + '</td><td class="status-success">✓ 成功</td>';
+          row.innerHTML = '<td>' + target.icon + ' ' + target.name + '</td><td><a href="/?ip=' + data.ip + '" target="_blank">' + data.ip + '</a></td><td>' + data.location + '</td><td class="status-success">�?成功</td>';
           tbody.appendChild(row);
           
           const coords = getCoordinates(data.location);
@@ -1019,7 +1063,7 @@ function getOutboundDetectPage(): string {
           }
         } catch (e) {
           const row = document.createElement('tr');
-          row.innerHTML = '<td>' + target.icon + ' ' + target.name + '</td><td>检测失败</td><td>-</td><td class="status-failed">✗ 失败</td>';
+          row.innerHTML = '<td>' + target.icon + ' ' + target.name + '</td><td>检测失�?/td><td>-</td><td class="status-failed">�?失败</td>';
           tbody.appendChild(row);
         }
       }
@@ -1030,15 +1074,15 @@ function getOutboundDetectPage(): string {
       }
       
       btn.disabled = false;
-      btn.textContent = '重新检测';
+      btn.textContent = '重新检�?;
     }
     
     function getCoordinates(location) {
       const locations = {
         '中国，湖南省，长沙市': [28.228056, 112.938889],
         '中国，广东省，广州市': [23.12911, 113.264385],
-        '美国，加利福尼亚州，旧金山': [37.7749, -122.4194],
-        '美国，俄勒冈州，博德曼': [45.8438, -119.6833],
+        '美国，加利福尼亚州，旧金�?: [37.7749, -122.4194],
+        '美国，俄勒冈州，博德�?: [45.8438, -119.6833],
         '中国': [35, 105],
         '美国': [37.0902, -95.7129]
       };
@@ -1095,20 +1139,20 @@ function getLeakDetectPage(): string {
     <nav>
       <a href="/" class="logo">IPPure</a>
       <ul>
-        <li><a href="/">IP检测</a></li>
-        <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
+        <li><a href="/">IP检�?/a></li>
+        <li><a href="/IP-Outbound-Detect.html">出口检�?/a></li>
         <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
-        <li><a href="/fingerprint.html">指纹检测</a></li>
+        <li><a href="/fingerprint.html">指纹检�?/a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
     </nav>
   </header>
   <div class="container">
-    <h1>VPN泄露检测</h1>
-    <button class="detect-btn" id="detectBtn">开始检测</button>
+    <h1>VPN泄露检�?/h1>
+    <button class="detect-btn" id="detectBtn">开始检�?/button>
     
     <div class="leak-test" id="leakTest" style="display:none;">
-      <h2>检测结果</h2>
+      <h2>检测结�?/h2>
       <div class="test-item">
         <span class="test-name">🌐 WebRTC IP泄露</span>
         <span class="test-result" id="webrtcResult">-</span>
@@ -1118,32 +1162,32 @@ function getLeakDetectPage(): string {
         <span class="test-result" id="dnsResult">-</span>
       </div>
       <div class="test-item">
-        <span class="test-name">🔀 出口IP一致性</span>
+        <span class="test-name">🔀 出口IP一致�?/span>
         <span class="test-result" id="outboundResult">-</span>
       </div>
       <div class="test-item">
-        <span class="test-name">📍 地理位置一致性</span>
+        <span class="test-name">📍 地理位置一致�?/span>
         <span class="test-result" id="geoResult">-</span>
       </div>
       <div class="test-item">
-        <span class="test-name">🛡️ VPN连接状态</span>
+        <span class="test-name">🛡�?VPN连接状�?/span>
         <span class="test-result" id="vpnStatus">-</span>
       </div>
     </div>
     
     <div class="info-box">
       <h3>VPN泄露原理</h3>
-      <p>使用国内一些软件的移动端app时，会记录用户定位和所在IP的关联，建立服务商内部的自有定位库</p>
+      <p>使用国内一些软件的移动端app时，会记录用户定位和所在IP的关联，建立服务商内部的自有定位�?/p>
       <p style="margin-top: 16px;">因为代理分流规则不合理，导致国外的IP地址被关联到国内的定位，因此导致VPN泄露</p>
-      <p style="margin-top: 16px; color: #a855f7; font-weight: bold;">做好VPN分流是防止被追踪的必要手段</p>
+      <p style="margin-top: 16px; color: #a855f7; font-weight: bold;">做好VPN分流是防止被追踪的必要手�?/p>
     </div>
     
     <div class="info-box">
-      <h3>检测说明</h3>
+      <h3>检测说�?/h3>
       <p><strong>WebRTC泄露</strong>：检测浏览器是否通过WebRTC暴露真实IP地址</p>
-      <p><strong>DNS泄露</strong>：检测DNS查询是否绕过VPN，暴露真实网络位置</p>
-      <p><strong>出口IP一致性</strong>：检测不同目标网站的出口IP是否一致</p>
-      <p><strong>地理位置一致性</strong>：检测IP地理位置与预期是否匹配</p>
+      <p><strong>DNS泄露</strong>：检测DNS查询是否绕过VPN，暴露真实网络位�?/p>
+      <p><strong>出口IP一致�?/strong>：检测不同目标网站的出口IP是否一�?/p>
+      <p><strong>地理位置一致�?/strong>：检测IP地理位置与预期是否匹�?/p>
     </div>
   </div>
   <footer><p>&copy; 2024 IPPure</p></footer>
@@ -1172,7 +1216,7 @@ function getLeakDetectPage(): string {
       detectVPNStatus();
       
       btn.disabled = false;
-      btn.textContent = '重新检测';
+      btn.textContent = '重新检�?;
     });
     
     async function detectWebRTC() {
@@ -1198,13 +1242,13 @@ function getLeakDetectPage(): string {
         
         setTimeout(() => {
           if (!foundIP) {
-            result.textContent = '✅ 安全';
+            result.textContent = '�?安全';
             result.className = 'test-result result-safe';
           }
           pc.close();
         }, 3000);
       } catch {
-        result.textContent = '❓ 无法检测';
+        result.textContent = '�?无法检�?;
         result.className = 'test-result result-info';
       }
     }
@@ -1220,7 +1264,7 @@ function getLeakDetectPage(): string {
         result.textContent = '⚠️ DNS可能泄露';
         result.className = 'test-result result-warning';
       } else {
-        result.textContent = '✅ DNS安全';
+        result.textContent = '�?DNS安全';
         result.className = 'test-result result-safe';
       }
     }
@@ -1230,7 +1274,7 @@ function getLeakDetectPage(): string {
       result.textContent = '检测中...';
       
       await new Promise(resolve => setTimeout(resolve, 300));
-      result.textContent = '✅ 出口IP一致';
+      result.textContent = '�?出口IP一�?;
       result.className = 'test-result result-safe';
     }
     
@@ -1239,7 +1283,7 @@ function getLeakDetectPage(): string {
       result.textContent = '检测中...';
       
       await new Promise(resolve => setTimeout(resolve, 300));
-      result.textContent = '✅ 位置一致';
+      result.textContent = '�?位置一�?;
       result.className = 'test-result result-safe';
     }
     
@@ -1251,10 +1295,10 @@ function getLeakDetectPage(): string {
       
       const isVPN = Math.random() > 0.5;
       if (isVPN) {
-        result.textContent = '✅ VPN已连接';
+        result.textContent = '�?VPN已连�?;
         result.className = 'test-result result-safe';
       } else {
-        result.textContent = '❌ 未检测到VPN';
+        result.textContent = '�?未检测到VPN';
         result.className = 'test-result result-risk';
       }
     }
@@ -1269,7 +1313,7 @@ function getDNSLeakPage(): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>DNS泄露检测 - IPPure</title>
+  <title>DNS泄露检�?- IPPure</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
@@ -1292,32 +1336,32 @@ function getDNSLeakPage(): string {
     <nav>
       <a href="/" class="logo">IPPure</a>
       <ul>
-        <li><a href="/">IP检测</a></li>
-        <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
+        <li><a href="/">IP检�?/a></li>
+        <li><a href="/IP-Outbound-Detect.html">出口检�?/a></li>
         <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
-        <li><a href="/fingerprint.html">指纹检测</a></li>
+        <li><a href="/fingerprint.html">指纹检�?/a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
     </nav>
   </header>
   <div class="container">
-    <h1>DNS泄露检测</h1>
+    <h1>DNS泄露检�?/h1>
     <div class="info-box">
       <h3>核心概念</h3>
-      <p><strong>DNS（域名解析）</strong>：把域名转成 IP（例：baidu.com → 110.242.68.66）；TCP/IP 通信必须有 IP 才能建立连接。</p>
-      <p><strong>DNS泄露</strong>：本应由代理（跳板/魔法服务器）完成的 DNS 查询，从本地网络发出或曾发出，暴露了访问意图。</p>
-      <p><strong>FakeIP</strong>：给本机返回占位的假 IP（常见 198.18.x.x），本机用假 IP 建连，真正的解析由代理端完成，避免本地泄露。</p>
+      <p><strong>DNS（域名解析）</strong>：把域名转成 IP（例：baidu.com �?110.242.68.66）；TCP/IP 通信必须�?IP 才能建立连接�?/p>
+      <p><strong>DNS泄露</strong>：本应由代理（跳�?魔法服务器）完成�?DNS 查询，从本地网络发出或曾发出，暴露了访问意图�?/p>
+      <p><strong>FakeIP</strong>：给本机返回占位的假 IP（常�?198.18.x.x），本机用假 IP 建连，真正的解析由代理端完成，避免本地泄露�?/p>
     </div>
     <div class="info-box">
       <h3>为什么会发生DNS泄露</h3>
-      <p>本机在建立 TCP 连接前会发 DNS；使用代理时若流程或路由不当，就会在本地触发解析。</p>
-      <p>某些路由规则需要把域名解析成 IP 来做 IP 匹配（fallback 情形），这类情况最容易导致本地 DNS 请求。</p>
+      <p>本机在建�?TCP 连接前会�?DNS；使用代理时若流程或路由不当，就会在本地触发解析�?/p>
+      <p>某些路由规则需要把域名解析�?IP 来做 IP 匹配（fallback 情形），这类情况最容易导致本地 DNS 请求�?/p>
     </div>
     <div class="info-box">
-      <h3>防止DNS泄露的实操建议</h3>
-      <p>1. 优先使用 Tun + FakeIP 模式，让本地只拿假 IP，真实解析在代理端进行。</p>
-      <p>2. 路由优先使用域名匹配；对会触发本地解析的场景，启用 no-resolve。</p>
-      <p>3. 对被劫持或敏感域名，强制走节点或为其指定独立 nameserver-policy。</p>
+      <h3>防止DNS泄露的实操建�?/h3>
+      <p>1. 优先使用 Tun + FakeIP 模式，让本地只拿�?IP，真实解析在代理端进行�?/p>
+      <p>2. 路由优先使用域名匹配；对会触发本地解析的场景，启�?no-resolve�?/p>
+      <p>3. 对被劫持或敏感域名，强制走节点或为其指定独立 nameserver-policy�?/p>
     </div>
   </div>
   <footer><p>&copy; 2024 IPPure</p></footer>
@@ -1331,7 +1375,7 @@ function getWebRTCPage(): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>WebRTC泄露检测 - IPPure</title>
+  <title>WebRTC泄露检�?- IPPure</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
@@ -1353,27 +1397,27 @@ function getWebRTCPage(): string {
     <nav>
       <a href="/" class="logo">IPPure</a>
       <ul>
-        <li><a href="/">IP检测</a></li>
-        <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
+        <li><a href="/">IP检�?/a></li>
+        <li><a href="/IP-Outbound-Detect.html">出口检�?/a></li>
         <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
-        <li><a href="/fingerprint.html">指纹检测</a></li>
+        <li><a href="/fingerprint.html">指纹检�?/a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
     </nav>
   </header>
   <div class="container">
-    <h1>WebRTC泄露检测</h1>
+    <h1>WebRTC泄露检�?/h1>
     <div class="info-box">
-      <p><strong>WebRTC（Web Real-Time Communication）</strong>是浏览器提供的实时音视频与点对点数据通道技术。<strong>WebRTC 泄露</strong>指的是在使用浏览器或某些应用时，WebRTC 的连接流程（ICE 候选交换）意外暴露了本地或真实公网 IP 地址，导致即便你在用 VPN/代理，目标网站或第三方仍可能看到你的真实 IP 地址或局域网地址。</p>
+      <p><strong>WebRTC（Web Real-Time Communication�?/strong>是浏览器提供的实时音视频与点对点数据通道技术�?strong>WebRTC 泄露</strong>指的是在使用浏览器或某些应用时，WebRTC 的连接流程（ICE 候选交换）意外暴露了本地或真实公网 IP 地址，导致即便你在用 VPN/代理，目标网站或第三方仍可能看到你的真实 IP 地址或局域网地址�?/p>
     </div>
     <div class="info-box">
       <h3 style="color: #a855f7; margin-bottom: 12px;">Chrome扩展推荐</h3>
-      <p>• 谷歌出品：WebRTC Network Limiter</p>
-      <p>• WebRTC Leak Prevent</p>
+      <p>�?谷歌出品：WebRTC Network Limiter</p>
+      <p>�?WebRTC Leak Prevent</p>
     </div>
     <div class="info-box">
       <h3 style="color: #a855f7; margin-bottom: 12px;">Firefox设置</h3>
-      <p>在 about:config 页面将 media.peerconnection.enabled 首选项设置为 false 来完全禁用 WebRTC。</p>
+      <p>�?about:config 页面�?media.peerconnection.enabled 首选项设置�?false 来完全禁�?WebRTC�?/p>
     </div>
   </div>
   <footer><p>&copy; 2024 IPPure</p></footer>
@@ -1440,10 +1484,10 @@ function getNeighborsPage(): string {
     <nav>
       <a href="/" class="logo">IPPure</a>
       <ul>
-        <li><a href="/">IP检测</a></li>
-        <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
+        <li><a href="/">IP检�?/a></li>
+        <li><a href="/IP-Outbound-Detect.html">出口检�?/a></li>
         <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
-        <li><a href="/fingerprint.html">指纹检测</a></li>
+        <li><a href="/fingerprint.html">指纹检�?/a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
     </nav>
@@ -1454,11 +1498,11 @@ function getNeighborsPage(): string {
         <div class="login-title">登录聊天</div>
         <div class="form-group">
           <label class="form-label">邮箱地址</label>
-          <input type="email" id="emailInput" class="form-input" placeholder="请输入邮箱">
+          <input type="email" id="emailInput" class="form-input" placeholder="请输入邮�?>
         </div>
         <div class="form-group">
           <label class="form-label">密码</label>
-          <input type="password" id="passwordInput" class="form-input" placeholder="请输入密码">
+          <input type="password" id="passwordInput" class="form-input" placeholder="请输入密�?>
         </div>
         <button id="loginBtn" class="login-btn">登录</button>
         <div id="loginError" class="error-msg"></div>
@@ -1474,17 +1518,17 @@ function getNeighborsPage(): string {
           <span class="chat-title">💬 聊天</span>
           <div>
             <span id="userEmail" class="chat-user"></span>
-            <button id="logoutBtn" class="logout-btn">退出</button>
+            <button id="logoutBtn" class="logout-btn">退�?/button>
           </div>
         </div>
-        <div class="chat-warning">⚠️ 聊天记录仅显示和保存最近7天</div>
+        <div class="chat-warning">⚠️ 聊天记录仅显示和保存最�?�?/div>
         <div id="chatMessages" class="chat-messages">
           <div class="loading">加载聊天记录...</div>
         </div>
         <div class="chat-input-area">
           <div class="input-row">
             <input type="text" id="messageInput" class="chat-input" placeholder="输入消息...">
-            <button id="sendBtn" class="send-btn">发送</button>
+            <button id="sendBtn" class="send-btn">发�?/button>
           </div>
         </div>
       </div>
@@ -1529,7 +1573,7 @@ function getNeighborsPage(): string {
         if (data.messages && data.messages.length > 0) {
           renderMessages(data.messages);
         } else {
-          chatMessages.innerHTML = '<div style="text-align:center;color:#64748b;padding:40px;">暂无聊天记录，开始聊天吧！</div>';
+          chatMessages.innerHTML = '<div style="text-align:center;color:#64748b;padding:40px;">暂无聊天记录，开始聊天吧�?/div>';
         }
       } catch (error) {
         chatMessages.innerHTML = '<div style="text-align:center;color:#ef4444;padding:40px;">加载消息失败，请刷新页面</div>';
@@ -1562,7 +1606,7 @@ function getNeighborsPage(): string {
       }
       
       loginBtn.disabled = true;
-      loginBtn.textContent = '登录中...';
+      loginBtn.textContent = '登录�?..';
       loginError.style.display = 'none';
       
       try {
@@ -1617,10 +1661,10 @@ function getNeighborsPage(): string {
           messageInput.value = '';
           loadMessages();
         } else {
-          alert(data.error || '发送失败');
+          alert(data.error || '发送失�?);
         }
       } catch (error) {
-        alert('发送失败，请检查网络连接');
+        alert('发送失败，请检查网络连�?);
       } finally {
         sendBtn.disabled = false;
         messageInput.disabled = false;
@@ -1671,10 +1715,10 @@ function getIPCardPage(): string {
     <nav>
       <a href="/" class="logo">IPPure</a>
       <ul>
-        <li><a href="/">IP检测</a></li>
-        <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
+        <li><a href="/">IP检�?/a></li>
+        <li><a href="/IP-Outbound-Detect.html">出口检�?/a></li>
         <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
-        <li><a href="/fingerprint.html">指纹检测</a></li>
+        <li><a href="/fingerprint.html">指纹检�?/a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
     </nav>
@@ -1725,10 +1769,10 @@ function getAPIPage(): string {
     <nav>
       <a href="/" class="logo">IPPure</a>
       <ul>
-        <li><a href="/">IP检测</a></li>
-        <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
+        <li><a href="/">IP检�?/a></li>
+        <li><a href="/IP-Outbound-Detect.html">出口检�?/a></li>
         <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
-        <li><a href="/fingerprint.html">指纹检测</a></li>
+        <li><a href="/fingerprint.html">指纹检�?/a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
     </nav>
@@ -1799,10 +1843,10 @@ function getAboutPage(): string {
     <nav>
       <a href="/" class="logo">IPPure</a>
       <ul>
-        <li><a href="/">IP检测</a></li>
-        <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
+        <li><a href="/">IP检�?/a></li>
+        <li><a href="/IP-Outbound-Detect.html">出口检�?/a></li>
         <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
-        <li><a href="/fingerprint.html">指纹检测</a></li>
+        <li><a href="/fingerprint.html">指纹检�?/a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
     </nav>
@@ -1810,64 +1854,64 @@ function getAboutPage(): string {
   <div class="container">
     <h1>关于本站</h1>
     <div class="info-box">
-      <p>IPPure努力做最专业且易用的IP纯净度检测软件，把所有常用的IP和浏览器检测工具打包到一个网站，提供一站式的查询服务。</p>
-      <p style="margin-top: 15px;">本项目灵感来源于 <span class="highlight">https://ippure.com/</span>，旨在提供类似功能的开源实现。</p>
-      <p style="margin-top: 15px;">对于数据不准确的反馈，我们会积极校正数据，并且公开校正过程，保证公开透明，杜绝数据作弊。</p>
+      <p>IPPure努力做最专业且易用的IP纯净度检测软件，把所有常用的IP和浏览器检测工具打包到一个网站，提供一站式的查询服务�?/p>
+      <p style="margin-top: 15px;">本项目灵感来源于 <span class="highlight">https://ippure.com/</span>，旨在提供类似功能的开源实现�?/p>
+      <p style="margin-top: 15px;">对于数据不准确的反馈，我们会积极校正数据，并且公开校正过程，保证公开透明，杜绝数据作弊�?/p>
     </div>
     
     <h2>主要功能</h2>
     <div class="info-box">
       <ul>
-        <li>• IP定位信息查询 - 多数据源验证，获取准确IP定位</li>
-        <li>• IP风险信息查询 - IPPure系数和Cloudflare系数评估</li>
-        <li>• 国旗显示 - 根据IP所属国家显示对应国旗</li>
-        <li>• 浏览器指纹检测 - 评估隐私保护等级</li>
-        <li>• VPN泄露检测 - WebRTC、DNS、出口IP分布检测</li>
-        <li>• IP信息卡片 - 生成访客IP信息卡片图片</li>
+        <li>�?IP定位信息查询 - 多数据源验证，获取准确IP定位</li>
+        <li>�?IP风险信息查询 - IPPure系数和Cloudflare系数评估</li>
+        <li>�?国旗显示 - 根据IP所属国家显示对应国�?/li>
+        <li>�?浏览器指纹检�?- 评估隐私保护等级</li>
+        <li>�?VPN泄露检�?- WebRTC、DNS、出口IP分布检�?/li>
+        <li>�?IP信息卡片 - 生成访客IP信息卡片图片</li>
       </ul>
     </div>
     
-    <h2>技术架构</h2>
+    <h2>技术架�?/h2>
     <div class="info-box">
       <ul>
-        <li>• Cloudflare Workers - 边缘计算部署</li>
-        <li>• TypeScript - 类型安全的前端开发</li>
-        <li>• Cloudflare KV - 聊天记录存储</li>
-        <li>• cloud-mail - 用户认证系统集成 (<a href="https://github.com/maillab/cloud-mail" target="_blank" style="color: #667eea;">GitHub</a>)</li>
-        <li>• 多数据源整合 - IP2Location、DB-IP、MaxMind、IPIP</li>
+        <li>�?Cloudflare Workers - 边缘计算部署</li>
+        <li>�?TypeScript - 类型安全的前端开�?/li>
+        <li>�?Cloudflare KV - 聊天记录存储</li>
+        <li>�?cloud-mail - 用户认证系统集成 (<a href="https://github.com/maillab/cloud-mail" target="_blank" style="color: #667eea;">GitHub</a>)</li>
+        <li>�?多数据源整合 - IP2Location、DB-IP、MaxMind、IPIP</li>
       </ul>
     </div>
     
     <h2>账户系统</h2>
     <div class="info-box">
-      <p>本项目集成 <span class="highlight">cloud-mail</span> 账户系统，提供安全可靠的用户认证服务：</p>
+      <p>本项目集�?<span class="highlight">cloud-mail</span> 账户系统，提供安全可靠的用户认证服务�?/p>
       <ul style="margin-top: 15px;">
-        <li>• 页面内直接登录，无需跳转</li>
-        <li>• 注册跳转至 <a href="https://mail.ygyang.uk/login" target="_blank" style="color: #667eea;">cloud-mail</a> 注册页面</li>
-        <li>• 聊天记录存储在 Cloudflare KV 中</li>
-        <li>• 聊天记录仅保留最近7天，自动清理</li>
+        <li>�?页面内直接登录，无需跳转</li>
+        <li>�?注册跳转�?<a href="https://mail.ygyang.uk/login" target="_blank" style="color: #667eea;">cloud-mail</a> 注册页面</li>
+        <li>�?聊天记录存储�?Cloudflare KV �?/li>
+        <li>�?聊天记录仅保留最�?天，自动清理</li>
       </ul>
     </div>
     
     <h2>目标用户</h2>
     <div class="info-box">
       <ul>
-        <li>• 流媒体作者</li>
-        <li>• AI使用者</li>
-        <li>• 跨境电商</li>
-        <li>• 开发调试人员</li>
-        <li>• 网络运维用户</li>
+        <li>�?流媒体作�?/li>
+        <li>�?AI使用�?/li>
+        <li>�?跨境电商</li>
+        <li>�?开发调试人�?/li>
+        <li>�?网络运维用户</li>
       </ul>
     </div>
     
     <h2>联系我们</h2>
     <div class="info-box">
-      <p>如有问题或建议，请通过以下方式联系我们：</p>
-      <p style="margin-top: 15px;">📧 电子邮件：<a href="mailto:ygyang@ygyang.uk" class="contact-link">ygyang@ygyang.uk</a></p>
-      <p style="margin-top: 15px;">📂 GitHub：<a href="https://github.com/ygyang2023/ippure" target="_blank" class="contact-link">https://github.com/ygyang2023/ippure</a></p>
+      <p>如有问题或建议，请通过以下方式联系我们�?/p>
+      <p style="margin-top: 15px;">📧 电子邮件�?a href="mailto:ygyang@ygyang.uk" class="contact-link">ygyang@ygyang.uk</a></p>
+      <p style="margin-top: 15px;">📂 GitHub�?a href="https://github.com/ygyang2023/ippure" target="_blank" class="contact-link">https://github.com/ygyang2023/ippure</a></p>
     </div>
   </div>
-  <footer><p>&copy; 2024 IPPure | <a href="/terms-privacy.html" style="color: #a855f7;">使用条款与隐私说明</a></p></footer>
+  <footer><p>&copy; 2024 IPPure | <a href="/terms-privacy.html" style="color: #a855f7;">使用条款与隐私说�?/a></p></footer>
 </body>
 </html>`;
 }
@@ -1900,10 +1944,10 @@ function getFAQPage(): string {
     <nav>
       <a href="/" class="logo">IPPure</a>
       <ul>
-        <li><a href="/">IP检测</a></li>
-        <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
+        <li><a href="/">IP检�?/a></li>
+        <li><a href="/IP-Outbound-Detect.html">出口检�?/a></li>
         <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
-        <li><a href="/fingerprint.html">指纹检测</a></li>
+        <li><a href="/fingerprint.html">指纹检�?/a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
     </nav>
@@ -1912,15 +1956,15 @@ function getFAQPage(): string {
     <h1>常见问题</h1>
     <div class="faq-item">
       <h3>什么是IP纯净度？</h3>
-      <p>IP纯净度指的是IP被标记为数据中心/机房IP的程度。纯净的IP通常是家庭宽带或移动网络IP，不容易被网站识别为代理或VPN。</p>
+      <p>IP纯净度指的是IP被标记为数据中心/机房IP的程度。纯净的IP通常是家庭宽带或移动网络IP，不容易被网站识别为代理或VPN�?/p>
     </div>
     <div class="faq-item">
       <h3>为什么需要检测IP纯净度？</h3>
-      <p>使用不纯净的IP访问流媒体、AI服务等可能遭遇风控拦截或直接拒绝服务。检测IP纯净度可以帮助您选择合适的出口IP。</p>
+      <p>使用不纯净的IP访问流媒体、AI服务等可能遭遇风控拦截或直接拒绝服务。检测IP纯净度可以帮助您选择合适的出口IP�?/p>
     </div>
     <div class="faq-item">
       <h3>数据不准确怎么办？</h3>
-      <p>您可以通过联系方式向我们反馈，并提供参考依据。我们会积极校正并公开校正过程。</p>
+      <p>您可以通过联系方式向我们反馈，并提供参考依据。我们会积极校正并公开校正过程�?/p>
     </div>
   </div>
   <footer><p>&copy; 2024 IPPure</p></footer>
@@ -1956,10 +2000,10 @@ function getCorrectionPage(): string {
     <nav>
       <a href="/" class="logo">IPPure</a>
       <ul>
-        <li><a href="/">IP检测</a></li>
-        <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
+        <li><a href="/">IP检�?/a></li>
+        <li><a href="/IP-Outbound-Detect.html">出口检�?/a></li>
         <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
-        <li><a href="/fingerprint.html">指纹检测</a></li>
+        <li><a href="/fingerprint.html">指纹检�?/a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
     </nav>
@@ -1969,14 +2013,14 @@ function getCorrectionPage(): string {
     <div class="info-box">
       <h2>数据纠正说明</h2>
       <p>当网站查询结果有错误时，欢迎向网站管理员反馈</p>
-      <p style="margin-top: 10px;">为了保障公开透明，所有的数据纠正记录都会在此汇总</p>
+      <p style="margin-top: 10px;">为了保障公开透明，所有的数据纠正记录都会在此汇�?/p>
     </div>
     <div class="info-box">
       <h2>注意</h2>
-      <p>• IP基本信息数据集来自于互联网，如cloudflare、ip2location、db-ip等</p>
-      <p>• IP基本数据的纠正需要向源头反馈，网站会定期拉取最新数据</p>
-      <p>• 这里的数据纠正主要指的是：IP类型、IP用途、风险系数</p>
-      <p>• 数据纠正需要提供一定的参考依据，比如：其他IP查询网站的数据、网络设备照片等</p>
+      <p>�?IP基本信息数据集来自于互联网，如cloudflare、ip2location、db-ip�?/p>
+      <p>�?IP基本数据的纠正需要向源头反馈，网站会定期拉取最新数�?/p>
+      <p>�?这里的数据纠正主要指的是：IP类型、IP用途、风险系�?/p>
+      <p>�?数据纠正需要提供一定的参考依据，比如：其他IP查询网站的数据、网络设备照片等</p>
     </div>
   </div>
   <footer><p>&copy; 2024 IPPure</p></footer>
@@ -2012,10 +2056,10 @@ function getChangelogPage(): string {
     <nav>
       <a href="/" class="logo">IPPure</a>
       <ul>
-        <li><a href="/">IP检测</a></li>
-        <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
+        <li><a href="/">IP检�?/a></li>
+        <li><a href="/IP-Outbound-Detect.html">出口检�?/a></li>
         <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
-        <li><a href="/fingerprint.html">指纹检测</a></li>
+        <li><a href="/fingerprint.html">指纹检�?/a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
     </nav>
@@ -2061,10 +2105,10 @@ function getContactPage(): string {
     <nav>
       <a href="/" class="logo">IPPure</a>
       <ul>
-        <li><a href="/">IP检测</a></li>
-        <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
+        <li><a href="/">IP检�?/a></li>
+        <li><a href="/IP-Outbound-Detect.html">出口检�?/a></li>
         <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
-        <li><a href="/fingerprint.html">指纹检测</a></li>
+        <li><a href="/fingerprint.html">指纹检�?/a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
     </nav>
@@ -2074,7 +2118,7 @@ function getContactPage(): string {
     <div class="contact-box">
       <div class="contact-item">
         <div class="contact-label">数据纠错反馈</div>
-        <div class="contact-value">如发现IP数据有误，请提供其他查询源的数据对比或设备照片作为参考依据</div>
+        <div class="contact-value">如发现IP数据有误，请提供其他查询源的数据对比或设备照片作为参考依�?/div>
       </div>
       <div class="contact-item">
         <div class="contact-label">商务合作</div>
@@ -2093,7 +2137,7 @@ function getTermsPrivacyPage(): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>使用条款与隐私说明 - IPPure</title>
+  <title>使用条款与隐私说�?- IPPure</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
@@ -2115,23 +2159,23 @@ function getTermsPrivacyPage(): string {
     <nav>
       <a href="/" class="logo">IPPure</a>
       <ul>
-        <li><a href="/">IP检测</a></li>
-        <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
+        <li><a href="/">IP检�?/a></li>
+        <li><a href="/IP-Outbound-Detect.html">出口检�?/a></li>
         <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
-        <li><a href="/fingerprint.html">指纹检测</a></li>
+        <li><a href="/fingerprint.html">指纹检�?/a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
     </nav>
   </header>
   <div class="container">
-    <h1>使用条款与隐私说明</h1>
+    <h1>使用条款与隐私说�?/h1>
     <div class="info-box">
       <h2>使用条款</h2>
-      <p>IPPure仅提供IP检测服务，用户在使用本服务时须遵守当地法律法规，不得用于非法用途。</p>
+      <p>IPPure仅提供IP检测服务，用户在使用本服务时须遵守当地法律法规，不得用于非法用途�?/p>
     </div>
     <div class="info-box">
       <h2>隐私说明</h2>
-      <p>IPPure不会记录用户的浏览行为和个人信息。我们仅收集访问时的IP地址用于检测目的，且不会与第三方共享。</p>
+      <p>IPPure不会记录用户的浏览行为和个人信息。我们仅收集访问时的IP地址用于检测目的，且不会与第三方共享�?/p>
     </div>
   </div>
   <footer><p>&copy; 2024 IPPure</p></footer>

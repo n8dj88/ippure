@@ -215,29 +215,43 @@ ippure/
 
 ## cloud-mail 集成配置
 
-### 环境变量
+本项目直接连接 cloud-mail 的 D1 数据库进行用户身份验证。
 
-| 变量名 | 值 | 说明 |
+### 数据库配置
+
+| 配置项 | 值 | 说明 |
 |--------|-----|------|
-| `IPPURE_CHATS` | KV Namespace ID | 聊天记录存储 |
-
-### API 端点
-
-- **登录验证**：`POST https://mail.ygyang.uk/api/auth/login`
-- **注册页面**：`https://mail.ygyang.uk/login`
+| **D1 Database** | `cnmailcn` | cloud-mail 用户数据库 |
+| **D1 Binding** | `db` | 代码中引用的变量名 |
+| **D1 Database ID** | `9e755ce9-d779-4afe-af61-20996946cf16` | D1 数据库唯一标识符 |
+| **KV Namespace** | `IPPURE_CHATS` | 聊天记录存储 |
 
 ### 登录流程
 
 1. 用户在 `/neighbors.html` 页面输入邮箱和密码
 2. 前端调用 `/v1/chat/login` 接口
-3. Worker 转发请求到 cloud-mail API 验证
+3. Worker 直接查询 cloud-mail D1 数据库验证用户
 4. 验证成功后返回用户信息，存储到 localStorage
 5. 用户进入聊天界面
 
+### 用户表结构
+
+cloud-mail D1 数据库中的 `user` 表结构：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `user_id` | INTEGER | 用户ID（主键） |
+| `email` | TEXT | 用户邮箱 |
+| `password` | TEXT | 密码哈希（SHA-256） |
+| `salt` | TEXT | 盐值 |
+| `status` | INTEGER | 账户状态（0=正常，1=禁用） |
+| `is_del` | INTEGER | 删除标记（0=未删除） |
+
 ### 数据存储
 
-- **聊天记录**：存储在 Cloudflare KV 中，Key 格式为 `{userId}:{messageId}`
-- **数据保留**：仅保留最近7天的聊天记录
+- **用户认证**：cloud-mail D1 数据库（`user` 表）
+- **聊天记录**：Cloudflare KV，Key 格式为 `{userId}:{messageId}`
+- **数据保留**：聊天记录仅保留最近7天
 - **自动清理**：每次发送消息时自动清理过期记录
 
 ## 故障排除
