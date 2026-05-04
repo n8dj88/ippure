@@ -1,309 +1,243 @@
-export interface Env {
-  ASSETS: { fetch: typeof fetch };
-  db: D1Database;
-  kv: KVNamespace;
-}
+var __defProp = Object.defineProperty;
+var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
-const HTML_PAGES: Record<string, string> = {
-  '/': 'index.html',
-  '/index.html': 'index.html',
-  '/IP-Outbound-Detect.html': 'IP-Outbound-Detect.html',
-  '/IP-leak-Detect.html': 'IP-leak-Detect.html',
-  '/Browser-WebRTC-Leak-Detect.html': 'Browser-WebRTC-Leak-Detect.html',
-  '/DNS-Leak-Detect.html': 'DNS-Leak-Detect.html',
-  '/fingerprint.html': 'fingerprint.html',
-  '/neighbors.html': 'neighbors.html',
-  '/MyIP-Info-Card.html': 'MyIP-Info-Card.html',
-  '/MyIP-Info-API.html': 'MyIP-Info-API.html',
-  '/about.html': 'about.html',
-  '/faq.html': 'faq.html',
-  '/correction.html': 'correction.html',
-  '/changelog.html': 'changelog.html',
-  '/contact.html': 'contact.html',
-  '/terms-privacy.html': 'terms-privacy.html',
+// src/index.ts
+var API_ENDPOINTS = {
+  "/v1/info": handleIPInfo,
+  "/v1/card": handleIPCard,
+  "/v1/resolve": handleResolve,
+  "/v1/chat/login": handleChatLogin,
+  "/v1/chat/logout": handleChatLogout,
+  "/v1/chat/messages": handleChatMessages,
+  "/v1/chat/send": handleChatSend,
+  "/v1/chat/history": handleChatHistory
 };
-
-const API_ENDPOINTS: Record<string, (request: Request, env: Env, ctx: ExecutionContext) => Promise<Response>> = {
-  '/v1/info': handleIPInfo,
-  '/v1/card': handleIPCard,
-  '/v1/resolve': handleResolve,
-  '/v1/chat/login': handleChatLogin,
-  '/v1/chat/logout': handleChatLogout,
-  '/v1/chat/messages': handleChatMessages,
-  '/v1/chat/send': handleChatSend,
-  '/v1/chat/history': handleChatHistory,
-};
-
-async function handleIPInfo(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+async function handleIPInfo(request, env, ctx) {
   const cf = request.cf;
-  const ip = request.headers.get('CF-Connecting-IP') || 'Unknown';
-  
+  const ip = request.headers.get("CF-Connecting-IP") || "Unknown";
   const ippureCoefficient = calculateFraudScore(ip);
   const cloudflareCoefficient = Math.max(0, Math.min(100, Math.floor(ippureCoefficient * 0.8 + Math.random() * 20)));
-  
   const ipInfo = {
-    ip: ip,
+    ip,
     asn: cf?.asn || 0,
-    asOrganization: cf?.asn ? `AS${cf.asn}` : '未知',
-    country: getCountryName(cf?.country || 'XX'),
-    countryCode: cf?.country?.toUpperCase() || 'XX',
-    region: cf?.region || '',
-    regionCode: cf?.region?.toUpperCase() || '',
-    city: cf?.city || '',
-    timezone: getTimezone(cf?.country || 'US', cf?.region || ''),
-    longitude: cf?.longitude?.toString() || '0',
-    latitude: cf?.latitude?.toString() || '0',
-    postalCode: cf?.postal || '',
+    asOrganization: cf?.asn ? `AS${cf.asn}` : "\u672A\u77E5",
+    country: getCountryName(cf?.country || "XX"),
+    countryCode: cf?.country?.toUpperCase() || "XX",
+    region: cf?.region || "",
+    regionCode: cf?.region?.toUpperCase() || "",
+    city: cf?.city || "",
+    timezone: getTimezone(cf?.country || "US", cf?.region || ""),
+    longitude: cf?.longitude?.toString() || "0",
+    latitude: cf?.latitude?.toString() || "0",
+    postalCode: cf?.postal || "",
     fraudScore: ippureCoefficient,
-    ippureCoefficient: ippureCoefficient,
-    cloudflareCoefficient: cloudflareCoefficient,
+    ippureCoefficient,
+    cloudflareCoefficient,
     isResidential: isResidentialIP(cf?.asn),
     isBroadcast: isBroadcastIP(ip),
     isDataCenter: isDataCenterIP(cf?.asn, ip),
-    userAgent: request.headers.get('User-Agent') || ''
+    userAgent: request.headers.get("User-Agent") || ""
   };
-
   return new Response(JSON.stringify(ipInfo, null, 2), {
     headers: {
-      'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, OPTIONS"
     }
   });
 }
-
-async function handleIPCard(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+__name(handleIPInfo, "handleIPInfo");
+async function handleIPCard(request, env, ctx) {
   const cf = request.cf;
-  const ip = request.headers.get('CF-Connecting-IP') || 'Unknown';
-  const country = cf?.country || 'Unknown';
-  const city = cf?.city || '';
-  const region = cf?.region || '';
-
+  const ip = request.headers.get("CF-Connecting-IP") || "Unknown";
+  const country = cf?.country || "Unknown";
+  const city = cf?.city || "";
+  const region = cf?.region || "";
   const svg = generateCardSVG(ip, country, city, region);
-
   return new Response(svg, {
     headers: {
-      'Content-Type': 'image/svg+xml',
-      'Cache-Control': 'public, max-age=300',
+      "Content-Type": "image/svg+xml",
+      "Cache-Control": "public, max-age=300"
     }
   });
 }
-
-async function handleResolve(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+__name(handleIPCard, "handleIPCard");
+async function handleResolve(request, env, ctx) {
   const url = new URL(request.url);
-  const domain = url.searchParams.get('domain') || 'example.com';
-  
-  const mockResults: Record<string, { ip: string; location: string }> = {
-    '主要出口 IPv4': { ip: '222.247.147.212', location: '中国，湖南省，长沙市' },
-    'itdog IPv4': { ip: '222.247.147.212', location: '中国，湖南省，长沙市' },
-    '网易': { ip: '223.111.194.114', location: '中国，广东省，广州市' },
-    'openai.com': { ip: '104.18.123.222', location: '美国，加利福尼亚州，旧金山' },
-    'claude.ai': { ip: '35.185.44.189', location: '美国，俄勒冈州，波特兰' },
-    'cloudflare.com': { ip: '104.16.132.229', location: '美国，加利福尼亚州，旧金山' },
-    'gitlab.com': { ip: '172.65.251.78', location: 'San Francisco, CA, USA' },
-    'nodejs.org': { ip: '104.20.23.46', location: '美国，加利福尼亚州，旧金山' }
+  const domain = url.searchParams.get("domain") || "example.com";
+  const mockResults = {
+    "\u4E3B\u8981\u51FA\u53E3 IPv4": { ip: "222.247.147.212", location: "\u4E2D\u56FD\uFF0C\u6E56\u5357\u7701\uFF0C\u957F\u6C99\u5E02" },
+    "itdog IPv4": { ip: "222.247.147.212", location: "\u4E2D\u56FD\uFF0C\u6E56\u5357\u7701\uFF0C\u957F\u6C99\u5E02" },
+    "\u7F51\u6613": { ip: "223.111.194.114", location: "\u4E2D\u56FD\uFF0C\u5E7F\u4E1C\u7701\uFF0C\u5E7F\u5DDE\u5E02" },
+    "openai.com": { ip: "104.18.123.222", location: "\u7F8E\u56FD\uFF0C\u52A0\u5229\u798F\u5C3C\u4E9A\u5DDE\uFF0C\u65E7\u91D1\u5C71" },
+    "claude.ai": { ip: "35.185.44.189", location: "\u7F8E\u56FD\uFF0C\u4FC4\u52D2\u5188\u5DDE\uFF0C\u6CE2\u7279\u5170" },
+    "cloudflare.com": { ip: "104.16.132.229", location: "\u7F8E\u56FD\uFF0C\u52A0\u5229\u798F\u5C3C\u4E9A\u5DDE\uFF0C\u65E7\u91D1\u5C71" },
+    "gitlab.com": { ip: "172.65.251.78", location: "\u7F8E\u56FD\uFF0C\u52A0\u5229\u798F\u5C3C\u4E9A\u5DDE\uFF0C\u65E7\u91D1\u5C71" },
+    "nodejs.org": { ip: "104.20.23.46", location: "\u7F8E\u56FD\uFF0C\u52A0\u5229\u798F\u5C3C\u4E9A\u5DDE\uFF0C\u65E7\u91D1\u5C71" }
   };
-
-  const result = mockResults[domain] || { ip: '8.8.8.8', location: '美国' };
-  
+  const result = mockResults[domain] || { ip: "8.8.8.8", location: "\u7F8E\u56FD" };
   return new Response(JSON.stringify(result), {
     headers: {
-      'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*',
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "*"
     }
   });
 }
-async function hashPassword(password: string): Promise<{ salt: string; hash: string }> {
-  const salt = generateSalt(16);
-  const hash = await genHashPassword(password, salt);
-  return { salt, hash };
-}
-
-function generateSalt(length: number): string {
-  const array = new Uint8Array(length);
-  crypto.getRandomValues(array);
-  return btoa(String.fromCharCode(...array));
-}
-
-async function genHashPassword(password: string, salt: string): Promise<string> {
+__name(handleResolve, "handleResolve");
+async function genHashPassword(password, salt) {
   const encoder = new TextEncoder();
   const data = encoder.encode(salt + password);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   return btoa(String.fromCharCode(...hashArray));
 }
-
-async function verifyPassword(inputPassword: string, salt: string, storedHash: string): Promise<boolean> {
+__name(genHashPassword, "genHashPassword");
+async function verifyPassword(inputPassword, salt, storedHash) {
   const hash = await genHashPassword(inputPassword, salt);
   return hash === storedHash;
 }
-
-async function handleChatLogin(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+__name(verifyPassword, "verifyPassword");
+async function handleChatLogin(request, env, ctx) {
   const url = new URL(request.url);
-  const email = url.searchParams.get('email');
-  const password = url.searchParams.get('password');
-  
+  const email = url.searchParams.get("email");
+  const password = url.searchParams.get("password");
   if (!email || !password) {
-    return new Response(JSON.stringify({ error: '缺少邮箱或密码' }), {
+    return new Response(JSON.stringify({ error: "\u7F3A\u5C11\u90AE\u7BB1\u6216\u5BC6\u7801" }), {
       status: 400,
-      headers: { 'Content-Type': 'application/json' }
+      headers: { "Content-Type": "application/json" }
     });
   }
-  
   try {
     const result = await env.db.prepare(
-      'SELECT user_id, email, password, salt, status FROM user WHERE email = ? AND is_del = 0'
+      "SELECT user_id, email, password, salt, status FROM user WHERE email = ? AND is_del = 0"
     ).bind(email).first();
-    
     if (!result) {
-      return new Response(JSON.stringify({ error: '用户不存在' }), {
+      return new Response(JSON.stringify({ error: "\u7528\u6237\u4E0D\u5B58\u5728" }), {
         status: 401,
-        headers: { 'Content-Type': 'application/json' }
+        headers: { "Content-Type": "application/json" }
       });
     }
-    
-    const isValid = await verifyPassword(password, result.salt as string, result.password as string);
-    
+    const isValid = await verifyPassword(password, result.salt, result.password);
     if (!isValid) {
-      return new Response(JSON.stringify({ error: '密码错误' }), {
+      return new Response(JSON.stringify({ error: "\u5BC6\u7801\u9519\u8BEF" }), {
         status: 401,
-        headers: { 'Content-Type': 'application/json' }
+        headers: { "Content-Type": "application/json" }
       });
     }
-    
     if (result.status === 1) {
-      return new Response(JSON.stringify({ error: '账户已被禁用' }), {
+      return new Response(JSON.stringify({ error: "\u8D26\u6237\u5DF2\u88AB\u7981\u7528" }), {
         status: 403,
-        headers: { 'Content-Type': 'application/json' }
+        headers: { "Content-Type": "application/json" }
       });
     }
-    
-    const token = btoa(JSON.stringify({ userId: result.user_id, email: result.email, exp: Date.now() + 7 * 24 * 60 * 60 * 1000 }));
-    
-    return new Response(JSON.stringify({ 
-      success: true, 
-      token: token,
-      user: { 
-        id: result.user_id, 
-        email: result.email 
+    const token = btoa(JSON.stringify({ userId: result.user_id, email: result.email, exp: Date.now() + 7 * 24 * 60 * 60 * 1e3 }));
+    return new Response(JSON.stringify({
+      success: true,
+      token,
+      user: {
+        id: result.user_id,
+        email: result.email
       }
     }), {
-      headers: { 'Content-Type': 'application/json' }
+      headers: { "Content-Type": "application/json" }
     });
   } catch (error) {
-    return new Response(JSON.stringify({ error: '登录服务暂不可用' }), {
+    return new Response(JSON.stringify({ error: "\u767B\u5F55\u670D\u52A1\u6682\u4E0D\u53EF\u7528" }), {
       status: 503,
-      headers: { 'Content-Type': 'application/json' }
+      headers: { "Content-Type": "application/json" }
     });
   }
 }
-
-async function handleChatLogout(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+__name(handleChatLogin, "handleChatLogin");
+async function handleChatLogout(request, env, ctx) {
   return new Response(JSON.stringify({ success: true }), {
-    headers: { 'Content-Type': 'application/json' }
+    headers: { "Content-Type": "application/json" }
   });
 }
-
-async function handleChatMessages(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-  const userId = request.headers.get('X-User-Id');
-  
+__name(handleChatLogout, "handleChatLogout");
+async function handleChatMessages(request, env, ctx) {
+  const userId = request.headers.get("X-User-Id");
   if (!userId) {
-    return new Response(JSON.stringify({ error: '请先登录' }), {
+    return new Response(JSON.stringify({ error: "\u8BF7\u5148\u767B\u5F55" }), {
       status: 401,
-      headers: { 'Content-Type': 'application/json' }
+      headers: { "Content-Type": "application/json" }
     });
   }
-  
-  const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-  
+  const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1e3;
   try {
-    const list = await env.kv.list({ prefix: userId + ':' });
+    const list = await env.kv.list({ prefix: userId + ":" });
     const messages = [];
-    
     for (const key of list.keys) {
-      const message = await env.kv.get(key.name, 'json');
+      const message = await env.kv.get(key.name, "json");
       if (message && message.timestamp > sevenDaysAgo) {
         messages.push(message);
       } else if (message) {
         await env.kv.delete(key.name);
       }
     }
-    
     messages.sort((a, b) => a.timestamp - b.timestamp);
-    
     return new Response(JSON.stringify({ messages }), {
-      headers: { 'Content-Type': 'application/json' }
+      headers: { "Content-Type": "application/json" }
     });
   } catch (error) {
-    return new Response(JSON.stringify({ error: '获取消息失败' }), {
+    return new Response(JSON.stringify({ error: "\u83B7\u53D6\u6D88\u606F\u5931\u8D25" }), {
       status: 500,
-      headers: { 'Content-Type': 'application/json' }
+      headers: { "Content-Type": "application/json" }
     });
   }
 }
-
-async function handleChatSend(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-  const userId = request.headers.get('X-User-Id');
-  
+__name(handleChatMessages, "handleChatMessages");
+async function handleChatSend(request, env, ctx) {
+  const userId = request.headers.get("X-User-Id");
   if (!userId) {
-    return new Response(JSON.stringify({ error: '请先登录' }), {
+    return new Response(JSON.stringify({ error: "\u8BF7\u5148\u767B\u5F55" }), {
       status: 401,
-      headers: { 'Content-Type': 'application/json' }
+      headers: { "Content-Type": "application/json" }
     });
   }
-  
   try {
     const body = await request.json();
     const { content } = body;
-    
-    if (!content || content.trim() === '') {
-      return new Response(JSON.stringify({ error: '消息内容不能为空' }), {
+    if (!content || content.trim() === "") {
+      return new Response(JSON.stringify({ error: "\u6D88\u606F\u5185\u5BB9\u4E0D\u80FD\u4E3A\u7A7A" }), {
         status: 400,
-        headers: { 'Content-Type': 'application/json' }
+        headers: { "Content-Type": "application/json" }
       });
     }
-    
     const message = {
       id: crypto.randomUUID(),
-      userId: userId,
+      userId,
       content: content.trim(),
       timestamp: Date.now()
     };
-    
     const key = `${userId}:${message.id}`;
     await env.kv.put(key, JSON.stringify(message));
-    
     await cleanupOldMessages(env);
-    
     return new Response(JSON.stringify({ success: true, message }), {
-      headers: { 'Content-Type': 'application/json' }
+      headers: { "Content-Type": "application/json" }
     });
   } catch (error) {
-    return new Response(JSON.stringify({ error: '发送消息失败' }), {
+    return new Response(JSON.stringify({ error: "\u53D1\u9001\u6D88\u606F\u5931\u8D25" }), {
       status: 500,
-      headers: { 'Content-Type': 'application/json' }
+      headers: { "Content-Type": "application/json" }
     });
   }
 }
-
-async function handleChatHistory(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-  const userId = request.headers.get('X-User-Id');
-  
+__name(handleChatSend, "handleChatSend");
+async function handleChatHistory(request, env, ctx) {
+  const userId = request.headers.get("X-User-Id");
   if (!userId) {
-    return new Response(JSON.stringify({ error: '请先登录' }), {
+    return new Response(JSON.stringify({ error: "\u8BF7\u5148\u767B\u5F55" }), {
       status: 401,
-      headers: { 'Content-Type': 'application/json' }
+      headers: { "Content-Type": "application/json" }
     });
   }
-  
-  const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-  
+  const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1e3;
   try {
-    const list = await env.kv.list({ prefix: userId + ':' });
+    const list = await env.kv.list({ prefix: userId + ":" });
     const messages = [];
-    
     for (const key of list.keys) {
-      const message = await env.kv.get(key.name, 'json');
+      const message = await env.kv.get(key.name, "json");
       if (message) {
         if (message.timestamp > sevenDaysAgo) {
           messages.push(message);
@@ -312,41 +246,38 @@ async function handleChatHistory(request: Request, env: Env, ctx: ExecutionConte
         }
       }
     }
-    
     messages.sort((a, b) => b.timestamp - a.timestamp);
-    
-    return new Response(JSON.stringify({ 
+    return new Response(JSON.stringify({
       messages,
       retentionDays: 7,
-      cleanupInfo: '超过7天的消息将自动删除'
+      cleanupInfo: "\u8D85\u8FC77\u5929\u7684\u6D88\u606F\u5C06\u81EA\u52A8\u5220\u9664"
     }), {
-      headers: { 'Content-Type': 'application/json' }
+      headers: { "Content-Type": "application/json" }
     });
   } catch (error) {
-    return new Response(JSON.stringify({ error: '获取历史记录失败' }), {
+    return new Response(JSON.stringify({ error: "\u83B7\u53D6\u5386\u53F2\u8BB0\u5F55\u5931\u8D25" }), {
       status: 500,
-      headers: { 'Content-Type': 'application/json' }
+      headers: { "Content-Type": "application/json" }
     });
   }
 }
-
-async function cleanupOldMessages(env: Env): Promise<void> {
+__name(handleChatHistory, "handleChatHistory");
+async function cleanupOldMessages(env) {
   try {
     const list = await env.kv.list();
-    const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-    
+    const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1e3;
     for (const key of list.keys) {
-      const message = await env.kv.get(key.name, 'json');
+      const message = await env.kv.get(key.name, "json");
       if (message && message.timestamp < sevenDaysAgo) {
         await env.kv.delete(key.name);
       }
     }
   } catch (error) {
-    console.error('清理旧消息失败:', error);
+    console.error("\u6E05\u7406\u65E7\u6D88\u606F\u5931\u8D25:", error);
   }
 }
-
-function generateCardSVG(ip: string, country: string, city: string, region: string): string {
+__name(cleanupOldMessages, "cleanupOldMessages");
+function generateCardSVG(ip, country, city, region) {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 120" width="400" height="120">
   <defs>
     <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -362,81 +293,76 @@ function generateCardSVG(ip: string, country: string, city: string, region: stri
   <text x="20" y="95" font-family="Arial,sans-serif" font-size="12" fill="#a855f7">Powered by IPPure</text>
 </svg>`;
 }
-
-function getCountryFlag(countryCode: string): string {
-  const codePoints = countryCode.toUpperCase().split('').map(char => 127397 + char.charCodeAt(0));
+__name(generateCardSVG, "generateCardSVG");
+function getCountryFlag(countryCode) {
+  const codePoints = countryCode.toUpperCase().split("").map((char) => 127397 + char.charCodeAt(0));
   return String.fromCodePoint(...codePoints);
 }
-
-function getCountryName(countryCode: string): string {
-  const countries: Record<string, string> = {
-    'CN': '中国', 'US': '美国', 'JP': '日本', 'KR': '韩国',
-    'GB': '英国', 'DE': '德国', 'FR': '法国', 'AU': '澳大利亚',
-    'CA': '加拿大', 'SG': '新加坡', 'HK': '香港', 'TW': '台湾',
-    'XX': '未知'
+__name(getCountryFlag, "getCountryFlag");
+function getCountryName(countryCode) {
+  const countries = {
+    "CN": "\u4E2D\u56FD",
+    "US": "\u7F8E\u56FD",
+    "JP": "\u65E5\u672C",
+    "KR": "\u97E9\u56FD",
+    "GB": "\u82F1\u56FD",
+    "DE": "\u5FB7\u56FD",
+    "FR": "\u6CD5\u56FD",
+    "AU": "\u6FB3\u5927\u5229\u4E9A",
+    "CA": "\u52A0\u62FF\u5927",
+    "SG": "\u65B0\u52A0\u5761",
+    "HK": "\u9999\u6E2F",
+    "TW": "\u53F0\u6E7E",
+    "XX": "\u672A\u77E5"
   };
   return countries[countryCode] || countryCode;
 }
-
-function getTimezone(country: string, region: string): string {
-  const timezones: Record<string, string> = {
-    'CN': 'Asia/Shanghai', 'US': 'America/New_York', 'JP': 'Asia/Tokyo',
-    'KR': 'Asia/Seoul', 'GB': 'Europe/London', 'DE': 'Europe/Berlin'
+__name(getCountryName, "getCountryName");
+function getTimezone(country, region) {
+  const timezones = {
+    "CN": "Asia/Shanghai",
+    "US": "America/New_York",
+    "JP": "Asia/Tokyo",
+    "KR": "Asia/Seoul",
+    "GB": "Europe/London",
+    "DE": "Europe/Berlin"
   };
-  return timezones[country] || 'UTC';
+  return timezones[country] || "UTC";
 }
-
-function calculateFraudScore(ip: string): number {
-  if (ip.startsWith('104.') || ip.startsWith('172.')) return Math.floor(Math.random() * 30);
-  if (ip.startsWith('192.168.') || ip.startsWith('10.')) return 0;
+__name(getTimezone, "getTimezone");
+function calculateFraudScore(ip) {
+  if (ip.startsWith("104.") || ip.startsWith("172.")) return Math.floor(Math.random() * 30);
+  if (ip.startsWith("192.168.") || ip.startsWith("10.")) return 0;
   return Math.floor(Math.random() * 50);
 }
-
-function isResidentialIP(asn: number | undefined): boolean {
+__name(calculateFraudScore, "calculateFraudScore");
+function isResidentialIP(asn) {
   if (!asn) return false;
   const residentialASNs = [13335, 15169, 8075];
   return residentialASNs.includes(asn);
 }
-
-function isBroadcastIP(ip: string): boolean {
-  return ip.endsWith('.0') || ip.endsWith('.255');
+__name(isResidentialIP, "isResidentialIP");
+function isBroadcastIP(ip) {
+  return ip.endsWith(".0") || ip.endsWith(".255");
 }
-
-function isDataCenterIP(asn: number | undefined, ip: string): boolean {
+__name(isBroadcastIP, "isBroadcastIP");
+function isDataCenterIP(asn, ip) {
   if (!asn) return false;
   const dataCenterASNs = [13335, 15169, 8075, 16509, 54113, 44440];
   if (dataCenterASNs.includes(asn)) return true;
-  if (ip.startsWith('104.') || ip.startsWith('172.64.')) return true;
+  if (ip.startsWith("104.") || ip.startsWith("172.64.")) return true;
   return false;
 }
-
-async function handleHTMLPage(path: string, env: Env): Promise<Response> {
-  const filePath = HTML_PAGES[path] || HTML_PAGES[path.replace(/\/$/, '')] || 'index.html';
-  
-  try {
-    const file = await env.ASSETS.fetch(new Request(`https://example.com/${filePath}`));
-    if (file.ok) {
-      return new Response(await file.text(), {
-        headers: { 'Content-Type': 'text/html; charset=utf-8' }
-      });
-    }
-  } catch (e) {
-  }
-  
-  return new Response(getDefaultPage(path), {
-    headers: { 'Content-Type': 'text/html; charset=utf-8' }
-  });
-}
-
-function getDefaultPage(path: string): string {
+__name(isDataCenterIP, "isDataCenterIP");
+function getDefaultPage(path) {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>IPPure - IP纯净度检测</title>
+  <title>IPPure - IP\u7EAF\u51C0\u5EA6\u68C0\u6D4B</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"><\/script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
@@ -494,43 +420,43 @@ function getDefaultPage(path: string): string {
     <nav>
       <a href="/" class="logo">IPPure</a>
       <ul>
-        <li><a href="/">IP检测</a></li>
-        <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
-        <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
-        <li><a href="/fingerprint.html">指纹检测</a></li>
-        <li><a href="/about.html">关于</a></li>
+        <li><a href="/">IP\u68C0\u6D4B</a></li>
+        <li><a href="/IP-Outbound-Detect.html">\u51FA\u53E3\u68C0\u6D4B</a></li>
+        <li><a href="/IP-leak-Detect.html">VPN\u6EAF\u6E90</a></li>
+        <li><a href="/fingerprint.html">\u6307\u7EB9\u68C0\u6D4B</a></li>
+        <li><a href="/about.html">\u5173\u4E8E</a></li>
       </ul>
     </nav>
   </header>
   <main class="container">
     <section class="hero">
-      <h1>IP纯净度检测</h1>
-      <p>专业检测IP类型风险系数出口分布确保网络隐私安全</p>
+      <h1>IP\u7EAF\u51C0\u5EA6\u68C0\u6D4B</h1>
+      <p>\u4E13\u4E1A\u68C0\u6D4BIP\u7C7B\u578B\u3001\u98CE\u9669\u7CFB\u6570\u3001\u51FA\u53E3\u5206\u5E03\uFF0C\u786E\u4FDD\u7F51\u7EDC\u9690\u79C1\u5B89\u5168</p>
       <button class="detect-btn" id="detectBtn">
-        <span id="btnText">开始检测我的IP</span>
+        <span id="btnText">\u5F00\u59CB\u68C0\u6D4B\u6211\u7684IP</span>
         <span id="btnLoading" class="loading" style="display:none;"></span>
       </button>
     </section>
     
     <section class="ip-result" id="ipResult">
-      <div class="ip-title">您的IP信息</div>
+      <div class="ip-title">\u60A8\u7684IP\u4FE1\u606F</div>
       <div class="flag-badge" id="ipFlag">-</div>
       <div class="ip-info">
-        <div class="info-item"><div class="info-label">IP地址</div><div class="info-value" id="ipAddress">-</div></div>
-        <div class="info-item"><div class="info-label">国家/地区</div><div class="info-value" id="ipCountry">-</div></div>
-        <div class="info-item"><div class="info-label">城市</div><div class="info-value" id="ipCity">-</div></div>
+        <div class="info-item"><div class="info-label">IP\u5730\u5740</div><div class="info-value" id="ipAddress">-</div></div>
+        <div class="info-item"><div class="info-label">\u56FD\u5BB6/\u5730\u533A</div><div class="info-value" id="ipCountry">-</div></div>
+        <div class="info-item"><div class="info-label">\u57CE\u5E02</div><div class="info-value" id="ipCity">-</div></div>
         <div class="info-item"><div class="info-label">ASN</div><div class="info-value" id="ipASN">-</div></div>
-        <div class="info-item"><div class="info-label">是否住宅IP</div><div class="info-value" id="ipResidential">-</div></div>
-        <div class="info-item"><div class="info-label">是否广播IP</div><div class="info-value" id="ipBroadcast">-</div></div>
-        <div class="info-item"><div class="info-label">是否数据中心</div><div class="info-value" id="ipDataCenter">-</div></div>
+        <div class="info-item"><div class="info-label">\u662F\u5426\u4F4F\u5B85IP</div><div class="info-value" id="ipResidential">-</div></div>
+        <div class="info-item"><div class="info-label">\u662F\u5426\u5E7F\u64ADIP</div><div class="info-value" id="ipBroadcast">-</div></div>
+        <div class="info-item"><div class="info-label">\u662F\u5426\u6570\u636E\u4E2D\u5FC3</div><div class="info-value" id="ipDataCenter">-</div></div>
       </div>
       
       <div class="risk-chart">
-        <div class="ip-title">风险系数评估</div>
+        <div class="ip-title">\u98CE\u9669\u7CFB\u6570\u8BC4\u4F30</div>
         
         <div class="chart-container">
           <div class="chart-label">
-            <span>IPPure系数</span>
+            <span>IPPure\u7CFB\u6570</span>
             <span id="ippureValue">-</span>
           </div>
           <div class="chart-bar-container">
@@ -544,7 +470,7 @@ function getDefaultPage(path: string): string {
         
         <div class="chart-container">
           <div class="chart-label">
-            <span>Cloudflare系数</span>
+            <span>Cloudflare\u7CFB\u6570</span>
             <span id="cloudflareValue">-</span>
           </div>
           <div class="chart-bar-container">
@@ -557,7 +483,7 @@ function getDefaultPage(path: string): string {
         </div>
       </div>
       
-      <div class="ip-title" style="margin-top:30px;">多数据源验证</div>
+      <div class="ip-title" style="margin-top:30px;">\u591A\u6570\u636E\u6E90\u9A8C\u8BC1</div>
       <div class="datasource-grid">
         <div class="datasource-card"><div class="datasource-name">IP2Location</div><div class="datasource-location" id="ds1">-</div></div>
         <div class="datasource-card"><div class="datasource-name">DB-IP</div><div class="datasource-location" id="ds2">-</div></div>
@@ -568,21 +494,21 @@ function getDefaultPage(path: string): string {
 
     <section class="info-grid">
       <div class="info-card">
-        <h3>多数据源验证</h3>
-        <p>整合IP2LocationDB-IPMaxMindIPIP等多个数据源提供最准确的IP信息</p>
+        <h3>\u591A\u6570\u636E\u6E90\u9A8C\u8BC1</h3>
+        <p>\u6574\u5408IP2Location\u3001DB-IP\u3001MaxMind\u3001IPIP\u7B49\u591A\u4E2A\u6570\u636E\u6E90\uFF0C\u63D0\u4F9B\u6700\u51C6\u786E\u7684IP\u4FE1\u606F</p>
       </div>
       <div class="info-card">
-        <h3>VPN泄露检测</h3>
-        <p>全面检测WebRTCDNS出口IP分布防止隐私泄露</p>
+        <h3>VPN\u6CC4\u9732\u68C0\u6D4B</h3>
+        <p>\u5168\u9762\u68C0\u6D4BWebRTC\u3001DNS\u3001\u51FA\u53E3IP\u5206\u5E03\uFF0C\u9632\u6B62\u9690\u79C1\u6CC4\u9732</p>
       </div>
       <div class="info-card">
-        <h3>浏览器指纹检测</h3>
-        <p>检测浏览器指纹信息评估隐私保护等级</p>
+        <h3>\u6D4F\u89C8\u5668\u6307\u7EB9\u68C0\u6D4B</h3>
+        <p>\u68C0\u6D4B\u6D4F\u89C8\u5668\u6307\u7EB9\u4FE1\u606F\uFF0C\u8BC4\u4F30\u9690\u79C1\u4FDD\u62A4\u7B49\u7EA7</p>
       </div>
     </section>
   </main>
   <footer>
-    <p>&copy; 2024 IPPure. All rights reserved. | <a href="/about.html">关于本站</a> | <a href="/contact.html">联系方式</a></p>
+    <p>&copy; 2024 IPPure. All rights reserved. | <a href="/about.html">\u5173\u4E8E\u672C\u7AD9</a> | <a href="/contact.html">\u8054\u7CFB\u65B9\u5F0F</a></p>
   </footer>
   <script>
     const detectBtn = document.getElementById('detectBtn');
@@ -592,7 +518,7 @@ function getDefaultPage(path: string): string {
 
     detectBtn.addEventListener('click', async () => {
       detectBtn.disabled = true;
-      btnText.textContent = '检测中...';
+      btnText.textContent = '\u68C0\u6D4B\u4E2D...';
       btnLoading.style.display = 'inline-block';
       
       try {
@@ -602,15 +528,15 @@ function getDefaultPage(path: string): string {
         document.getElementById('ipFlag').textContent = getCountryFlag(data.countryCode);
         document.getElementById('ipAddress').textContent = data.ip;
         document.getElementById('ipCountry').textContent = data.country;
-        document.getElementById('ipCity').textContent = data.city || data.region || '未知';
+        document.getElementById('ipCity').textContent = data.city || data.region || '\u672A\u77E5';
         document.getElementById('ipASN').textContent = data.asOrganization;
         
         document.getElementById('ipResidential').innerHTML = 
-          '<span class="status-badge ' + (data.isResidential ? 'status-yes' : 'status-no') + '">' + (data.isResidential ? '是' : '否') + '</span>';
+          '<span class="status-badge ' + (data.isResidential ? 'status-yes' : 'status-no') + '">' + (data.isResidential ? '\u662F' : '\u5426') + '</span>';
         document.getElementById('ipBroadcast').innerHTML = 
-          '<span class="status-badge ' + (data.isBroadcast ? 'status-yes' : 'status-no') + '">' + (data.isBroadcast ? '是' : '否') + '</span>';
+          '<span class="status-badge ' + (data.isBroadcast ? 'status-yes' : 'status-no') + '">' + (data.isBroadcast ? '\u662F' : '\u5426') + '</span>';
         document.getElementById('ipDataCenter').innerHTML = 
-          '<span class="status-badge ' + (data.isDataCenter ? 'status-yes' : 'status-no') + '">' + (data.isDataCenter ? '是' : '否') + '</span>';
+          '<span class="status-badge ' + (data.isDataCenter ? 'status-yes' : 'status-no') + '">' + (data.isDataCenter ? '\u662F' : '\u5426') + '</span>';
         
         updateRiskChart('ippure', data.ippureCoefficient);
         updateRiskChart('cloudflare', data.cloudflareCoefficient);
@@ -624,10 +550,10 @@ function getDefaultPage(path: string): string {
         
         ipResult.classList.add('active');
       } catch (error) {
-        alert('检测失败请稍后重试');
+        alert('\u68C0\u6D4B\u5931\u8D25\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5');
       } finally {
         detectBtn.disabled = false;
-        btnText.textContent = '重新检测';
+        btnText.textContent = '\u91CD\u65B0\u68C0\u6D4B';
         btnLoading.style.display = 'none';
       }
     });
@@ -646,135 +572,118 @@ function getDefaultPage(path: string): string {
       const riskEl = document.getElementById(type + 'Risk');
       let riskText, riskClass;
       if (value <= 25) {
-        riskText = '安全';
+        riskText = '\u5B89\u5168';
         riskClass = 'risk-low';
       } else if (value <= 50) {
-        riskText = '轻度风险';
+        riskText = '\u8F7B\u5EA6\u98CE\u9669';
         riskClass = 'risk-medium';
       } else if (value <= 70) {
-        riskText = '中度风险';
+        riskText = '\u4E2D\u5EA6\u98CE\u9669';
         riskClass = 'risk-medium';
       } else {
-        riskText = '高度风险';
+        riskText = '\u9AD8\u5EA6\u98CE\u9669';
         riskClass = 'risk-high';
       }
       riskEl.textContent = value + '% ' + riskText;
       riskEl.className = 'risk-indicator ' + riskClass;
     }
-  </script>
+  <\/script>
 </body>
 </html>`;
 }
-
-export default {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+__name(getDefaultPage, "getDefaultPage");
+var index_default = {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname;
-
-    if (path.startsWith('/v1/')) {
+    if (path.startsWith("/v1/")) {
       const handler = API_ENDPOINTS[path];
       if (handler) {
         return handler(request, env, ctx);
       }
     }
-
-    if (path === '/fingerprint.html') {
+    if (path === "/fingerprint.html") {
       return new Response(getFingerprintPage(), {
-        headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        headers: { "Content-Type": "text/html; charset=utf-8" }
       });
     }
-
-    if (path === '/IP-Outbound-Detect.html') {
+    if (path === "/IP-Outbound-Detect.html") {
       return new Response(getOutboundDetectPage(), {
-        headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        headers: { "Content-Type": "text/html; charset=utf-8" }
       });
     }
-
-    if (path === '/IP-leak-Detect.html') {
+    if (path === "/IP-leak-Detect.html") {
       return new Response(getLeakDetectPage(), {
-        headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        headers: { "Content-Type": "text/html; charset=utf-8" }
       });
     }
-
-    if (path === '/DNS-Leak-Detect.html') {
+    if (path === "/DNS-Leak-Detect.html") {
       return new Response(getDNSLeakPage(), {
-        headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        headers: { "Content-Type": "text/html; charset=utf-8" }
       });
     }
-
-    if (path === '/Browser-WebRTC-Leak-Detect.html') {
+    if (path === "/Browser-WebRTC-Leak-Detect.html") {
       return new Response(getWebRTCPage(), {
-        headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        headers: { "Content-Type": "text/html; charset=utf-8" }
       });
     }
-
-    if (path === '/neighbors.html') {
+    if (path === "/neighbors.html") {
       return new Response(getNeighborsPage(), {
-        headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        headers: { "Content-Type": "text/html; charset=utf-8" }
       });
     }
-
-    if (path === '/MyIP-Info-Card.html') {
+    if (path === "/MyIP-Info-Card.html") {
       return new Response(getIPCardPage(), {
-        headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        headers: { "Content-Type": "text/html; charset=utf-8" }
       });
     }
-
-    if (path === '/MyIP-Info-API.html') {
+    if (path === "/MyIP-Info-API.html") {
       return new Response(getAPIPage(), {
-        headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        headers: { "Content-Type": "text/html; charset=utf-8" }
       });
     }
-
-    if (path === '/about.html') {
+    if (path === "/about.html") {
       return new Response(getAboutPage(), {
-        headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        headers: { "Content-Type": "text/html; charset=utf-8" }
       });
     }
-
-    if (path === '/faq.html') {
+    if (path === "/faq.html") {
       return new Response(getFAQPage(), {
-        headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        headers: { "Content-Type": "text/html; charset=utf-8" }
       });
     }
-
-    if (path === '/correction.html') {
+    if (path === "/correction.html") {
       return new Response(getCorrectionPage(), {
-        headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        headers: { "Content-Type": "text/html; charset=utf-8" }
       });
     }
-
-    if (path === '/changelog.html') {
+    if (path === "/changelog.html") {
       return new Response(getChangelogPage(), {
-        headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        headers: { "Content-Type": "text/html; charset=utf-8" }
       });
     }
-
-    if (path === '/contact.html') {
+    if (path === "/contact.html") {
       return new Response(getContactPage(), {
-        headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        headers: { "Content-Type": "text/html; charset=utf-8" }
       });
     }
-
-    if (path === '/terms-privacy.html') {
+    if (path === "/terms-privacy.html") {
       return new Response(getTermsPrivacyPage(), {
-        headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        headers: { "Content-Type": "text/html; charset=utf-8" }
       });
     }
-
     return new Response(getDefaultPage(path), {
-      headers: { 'Content-Type': 'text/html; charset=utf-8' }
+      headers: { "Content-Type": "text/html; charset=utf-8" }
     });
   }
 };
-
-function getFingerprintPage(): string {
+function getFingerprintPage() {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>指纹检测 - IPPure</title>
+  <title>\u6307\u7EB9\u68C0\u6D4B - IPPure</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
@@ -801,40 +710,40 @@ function getFingerprintPage(): string {
     <nav>
       <a href="/" class="logo">IPPure</a>
       <ul>
-        <li><a href="/">IP检测</a></li>
-        <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
-        <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
-        <li><a href="/fingerprint.html">指纹检测</a></li>
-        <li><a href="/about.html">关于</a></li>
+        <li><a href="/">IP\u68C0\u6D4B</a></li>
+        <li><a href="/IP-Outbound-Detect.html">\u51FA\u53E3\u68C0\u6D4B</a></li>
+        <li><a href="/IP-leak-Detect.html">VPN\u6EAF\u6E90</a></li>
+        <li><a href="/fingerprint.html">\u6307\u7EB9\u68C0\u6D4B</a></li>
+        <li><a href="/about.html">\u5173\u4E8E</a></li>
       </ul>
     </nav>
   </header>
   <div class="container">
-    <h1>浏览器指纹检测</h1>
-    <button class="detect-btn" id="detectBtn">开始检测</button>
+    <h1>\u6D4F\u89C8\u5668\u6307\u7EB9\u68C0\u6D4B</h1>
+    <button class="detect-btn" id="detectBtn">\u5F00\u59CB\u68C0\u6D4B</button>
     <div class="fingerprint-data" id="fpData">
-      <div class="fp-item"><span class="fp-label">点击按钮开始检测...</span></div>
+      <div class="fp-item"><span class="fp-label">\u70B9\u51FB\u6309\u94AE\u5F00\u59CB\u68C0\u6D4B...</span></div>
     </div>
   </div>
   <footer><p>&copy; 2024 IPPure</p></footer>
   <script>
     async function detectFingerprint() {
       const data = {
-        '字体列表': await getFonts(),
-        '音频指纹': await getAudioFingerprint(),
-        '屏幕信息': JSON.stringify(getScreenInfo()),
-        'Canvas指纹': await getCanvasFingerprint(),
-        'WebGL信息': JSON.stringify(getWebGLInfo()),
-        '插件列表': getPlugins(),
-        '时区': Intl.DateTimeFormat().resolvedOptions().timeZone,
-        '语言': navigator.language,
-        '语言列表': navigator.languages ? Array.from(navigator.languages).join(', ') : navigator.language,
-        '操作系统': navigator.platform,
-        'CPU核心数': navigator.hardwareConcurrency || '未知',
-        '设备内存': navigator.deviceMemory ? navigator.deviceMemory + ' GB' : '未知',
-        '屏幕分辨率': screen.width + ' x ' + screen.height,
-        '颜色深度': screen.colorDepth + ' 位',
-        '触摸支持': navigator.maxTouchPoints > 0 ? '支持 (' + navigator.maxTouchPoints + '点)' : '不支持'
+        '\u5B57\u4F53\u5217\u8868': await getFonts(),
+        '\u97F3\u9891\u6307\u7EB9': await getAudioFingerprint(),
+        '\u5C4F\u5E55\u4FE1\u606F': JSON.stringify(getScreenInfo()),
+        'Canvas\u6307\u7EB9': await getCanvasFingerprint(),
+        'WebGL\u4FE1\u606F': JSON.stringify(getWebGLInfo()),
+        '\u63D2\u4EF6\u5217\u8868': getPlugins(),
+        '\u65F6\u533A': Intl.DateTimeFormat().resolvedOptions().timeZone,
+        '\u8BED\u8A00': navigator.language,
+        '\u8BED\u8A00\u5217\u8868': navigator.languages ? Array.from(navigator.languages).join(', ') : navigator.language,
+        '\u64CD\u4F5C\u7CFB\u7EDF': navigator.platform,
+        'CPU\u6838\u5FC3\u6570': navigator.hardwareConcurrency || '\u672A\u77E5',
+        '\u8BBE\u5907\u5185\u5B58': navigator.deviceMemory ? navigator.deviceMemory + ' GB' : '\u672A\u77E5',
+        '\u5C4F\u5E55\u5206\u8FA8\u7387': screen.width + ' x ' + screen.height,
+        '\u989C\u8272\u6DF1\u5EA6': screen.colorDepth + ' \u4F4D',
+        '\u89E6\u6478\u652F\u6301': navigator.maxTouchPoints > 0 ? '\u652F\u6301 (' + navigator.maxTouchPoints + '\u70B9)' : '\u4E0D\u652F\u6301'
       };
       
       const container = document.getElementById('fpData');
@@ -851,7 +760,7 @@ function getFingerprintPage(): string {
       
       for (const font of testFonts) {
         ctx.font = '14px ' + font;
-        const width = ctx.measureText('测试文字').width;
+        const width = ctx.measureText('\u6D4B\u8BD5\u6587\u5B57').width;
         detected.push(font);
       }
       return detected.join(', ');
@@ -884,11 +793,11 @@ function getFingerprintPage(): string {
             resolve(sum.toFixed(10));
           };
         });
-      } catch { return '无法获取'; }
+      } catch { return '\u65E0\u6CD5\u83B7\u53D6'; }
     }
     
     function getScreenInfo() {
-      return { '宽度': screen.width, '高度': screen.height, '可用宽度': screen.availWidth, '可用高度': screen.availHeight };
+      return { '\u5BBD\u5EA6': screen.width, '\u9AD8\u5EA6': screen.height, '\u53EF\u7528\u5BBD\u5EA6': screen.availWidth, '\u53EF\u7528\u9AD8\u5EA6': screen.availHeight };
     }
     
     async function getCanvasFingerprint() {
@@ -910,44 +819,44 @@ function getFingerprintPage(): string {
     function getWebGLInfo() {
       const canvas = document.createElement('canvas');
       const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-      if (!gl) return { '支持': '否' };
-      return { '供应商': gl.getParameter(gl.VENDOR), '渲染器': gl.getParameter(gl.RENDERER) };
+      if (!gl) return { '\u652F\u6301': '\u5426' };
+      return { '\u4F9B\u5E94\u5546': gl.getParameter(gl.VENDOR), '\u6E32\u67D3\u5668': gl.getParameter(gl.RENDERER) };
     }
     
     function getPlugins() {
-      if (!navigator.plugins) return '不支持或已禁用';
+      if (!navigator.plugins) return '\u4E0D\u652F\u6301\u6216\u5DF2\u7981\u7528';
       const plugins = Array.from(navigator.plugins).map(p => p.name);
-      return plugins.length > 0 ? plugins.join(', ') : '无插件';
+      return plugins.length > 0 ? plugins.join(', ') : '\u65E0\u63D2\u4EF6';
     }
     
     document.getElementById('detectBtn').addEventListener('click', async () => {
       const btn = document.getElementById('detectBtn');
       btn.disabled = true;
-      btn.textContent = '检测中...';
+      btn.textContent = '\u68C0\u6D4B\u4E2D...';
       const container = document.getElementById('fpData');
-      container.innerHTML = '<div class="loading">正在收集指纹信息...</div>';
+      container.innerHTML = '<div class="loading">\u6B63\u5728\u6536\u96C6\u6307\u7EB9\u4FE1\u606F...</div>';
       try {
         await detectFingerprint();
       } catch (error) {
-        container.innerHTML = '<div style="color: #ef4444;">检测失败</div>';
+        container.innerHTML = '<div style="color: #ef4444;">\u68C0\u6D4B\u5931\u8D25</div>';
       }
       btn.disabled = false;
-      btn.textContent = '重新检测';
+      btn.textContent = '\u91CD\u65B0\u68C0\u6D4B';
     });
-  </script>
+  <\/script>
 </body>
 </html>`;
 }
-
-function getOutboundDetectPage(): string {
+__name(getFingerprintPage, "getFingerprintPage");
+function getOutboundDetectPage() {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>出口检测 - IPPure</title>
+  <title>\u51FA\u53E3\u68C0\u6D4B - IPPure</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"><\/script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
@@ -975,39 +884,39 @@ function getOutboundDetectPage(): string {
     <nav>
       <a href="/" class="logo">IPPure</a>
       <ul>
-        <li><a href="/">IP检测</a></li>
-        <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
-        <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
-        <li><a href="/fingerprint.html">指纹检测</a></li>
-        <li><a href="/about.html">关于</a></li>
+        <li><a href="/">IP\u68C0\u6D4B</a></li>
+        <li><a href="/IP-Outbound-Detect.html">\u51FA\u53E3\u68C0\u6D4B</a></li>
+        <li><a href="/IP-leak-Detect.html">VPN\u6EAF\u6E90</a></li>
+        <li><a href="/fingerprint.html">\u6307\u7EB9\u68C0\u6D4B</a></li>
+        <li><a href="/about.html">\u5173\u4E8E</a></li>
       </ul>
     </nav>
   </header>
   <div class="container">
-    <h1>IP出口检测</h1>
-    <div class="alert">全面检测IP出口分布并在地图上显示出口IP分布</div>
-    <button class="detect-btn" id="detectBtn">开始检测</button>
+    <h1>IP\u51FA\u53E3\u68C0\u6D4B</h1>
+    <div class="alert">\u5168\u9762\u68C0\u6D4BIP\u51FA\u53E3\u5206\u5E03\uFF0C\u5E76\u5728\u5730\u56FE\u4E0A\u663E\u793A\u51FA\u53E3IP\u5206\u5E03</div>
+    <button class="detect-btn" id="detectBtn">\u5F00\u59CB\u68C0\u6D4B</button>
     <div id="map"></div>
     <table class="target-table">
       <thead>
-        <tr><th>目标</th><th>IP</th><th>位置</th><th>状态</th></tr>
+        <tr><th>\u76EE\u6807</th><th>IP</th><th>\u4F4D\u7F6E</th><th>\u72B6\u6001</th></tr>
       </thead>
       <tbody id="targets">
-        <tr><td colspan="4" style="text-align:center;">点击开始检测按钮</td></tr>
+        <tr><td colspan="4" style="text-align:center;">\u70B9\u51FB\u5F00\u59CB\u68C0\u6D4B\u6309\u94AE</td></tr>
       </tbody>
     </table>
   </div>
   <footer><p>&copy; 2024 IPPure</p></footer>
   <script>
     const targets = [
-      { name: '主要出口 IPv4', type: 'Global', category: 'IPv4 Only', icon: '' },
-      { name: 'itdog IPv4', type: 'Web', region: 'China', category: 'IPv4 Only', icon: '' },
-      { name: '网易', type: 'Web', region: 'China', category: '', icon: '' },
-      { name: 'openai.com', type: 'Web', region: 'Global', category: 'AI', icon: '' },
-      { name: 'claude.ai', type: 'Web', region: 'Global', category: 'AI', icon: '' },
-      { name: 'cloudflare.com', type: 'Web', region: 'Global', category: '', icon: '' },
-      { name: 'gitlab.com', type: 'Web', region: 'Global', category: '', icon: '' },
-      { name: 'nodejs.org', type: 'Web', region: 'Global', category: '', icon: '' }
+      { name: '\u4E3B\u8981\u51FA\u53E3 IPv4', type: 'Global', category: 'IPv4 Only', icon: '\u{1F310}' },
+      { name: 'itdog IPv4', type: 'Web', region: 'China', category: 'IPv4 Only', icon: '\u{1F5A5}\uFE0F' },
+      { name: '\u7F51\u6613', type: 'Web', region: 'China', category: '', icon: '\u{1F4F0}' },
+      { name: 'openai.com', type: 'Web', region: 'Global', category: 'AI', icon: '\u{1F916}' },
+      { name: 'claude.ai', type: 'Web', region: 'Global', category: 'AI', icon: '\u{1F4AC}' },
+      { name: 'cloudflare.com', type: 'Web', region: 'Global', category: '', icon: '\u2601\uFE0F' },
+      { name: 'gitlab.com', type: 'Web', region: 'Global', category: '', icon: '\u{1F527}' },
+      { name: 'nodejs.org', type: 'Web', region: 'Global', category: '', icon: '\u{1F4E6}' }
     ];
     
     let map;
@@ -1016,7 +925,7 @@ function getOutboundDetectPage(): string {
       if (map) return;
       map = L.map('map').setView([35, 105], 4);
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: ' OpenStreetMap contributors'
+        attribution: '\xA9 OpenStreetMap contributors'
       }).addTo(map);
     }
     
@@ -1024,7 +933,7 @@ function getOutboundDetectPage(): string {
       initMap();
       const btn = document.getElementById('detectBtn');
       btn.disabled = true;
-      btn.textContent = '检测中...';
+      btn.textContent = '\u68C0\u6D4B\u4E2D...';
       
       const tbody = document.getElementById('targets');
       tbody.innerHTML = '';
@@ -1037,7 +946,7 @@ function getOutboundDetectPage(): string {
           const data = await response.json();
           
           const row = document.createElement('tr');
-          row.innerHTML = '<td>' + target.icon + ' ' + target.name + '</td><td><a href="/?ip=' + data.ip + '" target="_blank">' + data.ip + '</a></td><td>' + data.location + '</td><td class="status-success">检测成功</td>';
+          row.innerHTML = '<td>' + target.icon + ' ' + target.name + '</td><td><a href="/?ip=' + data.ip + '" target="_blank">' + data.ip + '</a></td><td>' + data.location + '</td><td class="status-success">\u68C0\u6D4B\u6210\u529F</td>';
           tbody.appendChild(row);
           
           const coords = getCoordinates(data.location);
@@ -1048,7 +957,7 @@ function getOutboundDetectPage(): string {
           }
         } catch (e) {
           const row = document.createElement('tr');
-          row.innerHTML = '<td>' + target.icon + ' ' + target.name + '</td><td>检测失败</td><td>-</td><td class="status-failed">检测失败</td>';
+          row.innerHTML = '<td>' + target.icon + ' ' + target.name + '</td><td>\u68C0\u6D4B\u5931\u8D25</td><td>-</td><td class="status-failed">\u68C0\u6D4B\u5931\u8D25</td>';
           tbody.appendChild(row);
         }
       }
@@ -1059,17 +968,17 @@ function getOutboundDetectPage(): string {
       }
       
       btn.disabled = false;
-      btn.textContent = '重新检测';
+      btn.textContent = '\u91CD\u65B0\u68C0\u6D4B';
     }
     
     function getCoordinates(location) {
       const locations = {
-        '中国湖南省长沙市': [28.228056, 112.938889],
-        '中国广东省广州市': [23.12911, 113.264385],
-        '美国加利福尼亚州旧金山': [37.7749, -122.4194],
-        '美国俄勒冈州波特兰': [45.8438, -119.6833],
-        '中国': [35, 105],
-        '美国': [37.0902, -95.7129]
+        '\u4E2D\u56FD\uFF0C\u6E56\u5357\u7701\uFF0C\u957F\u6C99\u5E02': [28.228056, 112.938889],
+        '\u4E2D\u56FD\uFF0C\u5E7F\u4E1C\u7701\uFF0C\u5E7F\u5DDE\u5E02': [23.12911, 113.264385],
+        '\u7F8E\u56FD\uFF0C\u52A0\u5229\u798F\u5C3C\u4E9A\u5DDE\uFF0C\u65E7\u91D1\u5C71': [37.7749, -122.4194],
+        '\u7F8E\u56FD\uFF0C\u4FC4\u52D2\u5188\u5DDE\uFF0C\u6CE2\u7279\u5170': [45.8438, -119.6833],
+        '\u4E2D\u56FD': [35, 105],
+        '\u7F8E\u56FD': [37.0902, -95.7129]
       };
       for (const [key, value] of Object.entries(locations)) {
         if (location.includes(key)) return value;
@@ -1078,18 +987,18 @@ function getOutboundDetectPage(): string {
     }
     
     document.getElementById('detectBtn').addEventListener('click', detectOutbound);
-  </script>
+  <\/script>
 </body>
 </html>`;
 }
-
-function getLeakDetectPage(): string {
+__name(getOutboundDetectPage, "getOutboundDetectPage");
+function getLeakDetectPage() {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>VPN溯源 - IPPure</title>
+  <title>VPN\u6EAF\u6E90 - IPPure</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
@@ -1124,55 +1033,55 @@ function getLeakDetectPage(): string {
     <nav>
       <a href="/" class="logo">IPPure</a>
       <ul>
-        <li><a href="/">IP检测</a></li>
-        <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
-        <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
-        <li><a href="/fingerprint.html">指纹检测</a></li>
-        <li><a href="/about.html">关于</a></li>
+        <li><a href="/">IP\u68C0\u6D4B</a></li>
+        <li><a href="/IP-Outbound-Detect.html">\u51FA\u53E3\u68C0\u6D4B</a></li>
+        <li><a href="/IP-leak-Detect.html">VPN\u6EAF\u6E90</a></li>
+        <li><a href="/fingerprint.html">\u6307\u7EB9\u68C0\u6D4B</a></li>
+        <li><a href="/about.html">\u5173\u4E8E</a></li>
       </ul>
     </nav>
   </header>
   <div class="container">
-    <h1>VPN泄露检测</h1>
-    <button class="detect-btn" id="detectBtn">开始检测</button>
+    <h1>VPN\u6CC4\u9732\u68C0\u6D4B</h1>
+    <button class="detect-btn" id="detectBtn">\u5F00\u59CB\u68C0\u6D4B</button>
     
     <div class="leak-test" id="leakTest" style="display:none;">
-      <h2>检测结果</h2>
+      <h2>\u68C0\u6D4B\u7ED3\u679C</h2>
       <div class="test-item">
-        <span class="test-name"> WebRTC IP泄露</span>
+        <span class="test-name">\u{1F310} WebRTC IP\u6CC4\u9732</span>
         <span class="test-result" id="webrtcResult">-</span>
       </div>
       <div class="test-item">
-        <span class="test-name"> DNS泄露</span>
+        <span class="test-name">\u{1F4E1} DNS\u6CC4\u9732</span>
         <span class="test-result" id="dnsResult">-</span>
       </div>
       <div class="test-item">
-        <span class="test-name"> 出口IP一致性</span>
+        <span class="test-name">\u{1F500} \u51FA\u53E3IP\u4E00\u81F4\u6027</span>
         <span class="test-result" id="outboundResult">-</span>
       </div>
       <div class="test-item">
-        <span class="test-name"> 地理位置一致性</span>
+        <span class="test-name">\u{1F4CD} \u5730\u7406\u4F4D\u7F6E\u4E00\u81F4\u6027</span>
         <span class="test-result" id="geoResult">-</span>
       </div>
       <div class="test-item">
-        <span class="test-name"> VPN连接状态</span>
+        <span class="test-name">\u{1F6E1}\uFE0F VPN\u8FDE\u63A5\u72B6\u6001</span>
         <span class="test-result" id="vpnStatus">-</span>
       </div>
     </div>
     
     <div class="info-box">
-      <h3>VPN泄露原理</h3>
-      <p>使用国内一些软件的移动端app时会记录用户定位和所在IP的关联建立服务商内部的自有定位库</p>
-      <p style="margin-top: 16px;">因为代理分流规则不合理导致国外的IP地址被关联到国内的定位因此导致VPN泄露</p>
-      <p style="margin-top: 16px; color: #a855f7; font-weight: bold;">做好VPN分流是防止被追踪的必要手段</p>
+      <h3>VPN\u6CC4\u9732\u539F\u7406</h3>
+      <p>\u4F7F\u7528\u56FD\u5185\u4E00\u4E9B\u8F6F\u4EF6\u7684\u79FB\u52A8\u7AEFapp\u65F6\uFF0C\u4F1A\u8BB0\u5F55\u7528\u6237\u5B9A\u4F4D\u548C\u6240\u5728IP\u7684\u5173\u8054\uFF0C\u5EFA\u7ACB\u670D\u52A1\u5546\u5185\u90E8\u7684\u81EA\u6709\u5B9A\u4F4D\u5E93\u3002</p>
+      <p style="margin-top: 16px;">\u56E0\u4E3A\u4EE3\u7406\u5206\u6D41\u89C4\u5219\u4E0D\u5408\u7406\uFF0C\u5BFC\u81F4\u56FD\u5916\u7684IP\u5730\u5740\u88AB\u5173\u8054\u5230\u56FD\u5185\u7684\u5B9A\u4F4D\uFF0C\u56E0\u6B64\u5BFC\u81F4VPN\u6CC4\u9732</p>
+      <p style="margin-top: 16px; color: #a855f7; font-weight: bold;">\u505A\u597DVPN\u5206\u6D41\u662F\u9632\u6B62\u88AB\u8FFD\u8E2A\u7684\u5FC5\u8981\u624B\u6BB5</p>
     </div>
     
     <div class="info-box">
-      <h3>检测说明</h3>
-      <p><strong>WebRTC泄露</strong>检测浏览器是否通过WebRTC暴露真实IP地址</p>
-      <p><strong>DNS泄露</strong>检测DNS查询是否绕过VPN暴露真实网络位置</p>
-      <p><strong>出口IP一致性</strong>检测不同目标网站的出口IP是否一致</p>
-      <p><strong>地理位置一致性</strong>检测IP地理位置与预期是否匹配</p>
+      <h3>\u68C0\u6D4B\u8BF4\u660E</h3>
+      <p><strong>WebRTC\u6CC4\u9732</strong>\uFF1A\u68C0\u6D4B\u6D4F\u89C8\u5668\u662F\u5426\u901A\u8FC7WebRTC\u66B4\u9732\u771F\u5B9EIP\u5730\u5740</p>
+      <p><strong>DNS\u6CC4\u9732</strong>\uFF1A\u68C0\u6D4BDNS\u67E5\u8BE2\u662F\u5426\u7ED5\u8FC7VPN\uFF0C\u66B4\u9732\u771F\u5B9E\u7F51\u7EDC\u4F4D\u7F6E</p>
+      <p><strong>\u51FA\u53E3IP\u4E00\u81F4\u6027</strong>\uFF1A\u68C0\u6D4B\u4E0D\u540C\u76EE\u6807\u7F51\u7AD9\u7684\u51FA\u53E3IP\u662F\u5426\u4E00\u81F4</p>
+      <p><strong>\u5730\u7406\u4F4D\u7F6E\u4E00\u81F4\u6027</strong>\uFF1A\u68C0\u6D4BIP\u5730\u7406\u4F4D\u7F6E\u4E0E\u9884\u671F\u662F\u5426\u5339\u914D</p>
     </div>
   </div>
   <footer><p>&copy; 2024 IPPure</p></footer>
@@ -1180,7 +1089,7 @@ function getLeakDetectPage(): string {
     document.getElementById('detectBtn').addEventListener('click', async () => {
       const btn = document.getElementById('detectBtn');
       btn.disabled = true;
-      btn.textContent = '检测中...';
+      btn.textContent = '\u68C0\u6D4B\u4E2D...';
       
       document.getElementById('leakTest').style.display = 'block';
       
@@ -1201,12 +1110,12 @@ function getLeakDetectPage(): string {
       detectVPNStatus();
       
       btn.disabled = false;
-      btn.textContent = '重新检测';
+      btn.textContent = '\u91CD\u65B0\u68C0\u6D4B';
     });
     
     async function detectWebRTC() {
       const result = document.getElementById('webrtcResult');
-      result.textContent = '检测中...';
+      result.textContent = '\u68C0\u6D4B\u4E2D...';
       
       try {
         const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
@@ -1218,7 +1127,7 @@ function getLeakDetectPage(): string {
           if (e.candidate && e.candidate.address) {
             const ip = e.candidate.address;
             if (!ip.startsWith('192.168.') && !ip.startsWith('10.') && !ip.startsWith('172.') && !ip.startsWith('::1') && !ip.startsWith('fe80:')) {
-              result.textContent = ' 存在泄露 (' + ip + ')';
+              result.textContent = '\u26A0\uFE0F \u5B58\u5728\u6CC4\u9732 (' + ip + ')';
               result.className = 'test-result result-warning';
               foundIP = true;
             }
@@ -1227,78 +1136,78 @@ function getLeakDetectPage(): string {
         
         setTimeout(() => {
           if (!foundIP) {
-            result.textContent = ' 安全';
+            result.textContent = '\u2705 \u5B89\u5168';
             result.className = 'test-result result-safe';
           }
           pc.close();
         }, 3000);
       } catch {
-        result.textContent = ' 无法检测';
+        result.textContent = '\u26A0\uFE0F \u65E0\u6CD5\u68C0\u6D4B';
         result.className = 'test-result result-info';
       }
     }
     
     async function detectDNS() {
       const result = document.getElementById('dnsResult');
-      result.textContent = '检测中...';
+      result.textContent = '\u68C0\u6D4B\u4E2D...';
       
       const isLeaking = Math.random() > 0.8;
       await new Promise(resolve => setTimeout(resolve, 400));
       
       if (isLeaking) {
-        result.textContent = ' DNS可能泄露';
+        result.textContent = '\u26A0\uFE0F DNS\u53EF\u80FD\u6CC4\u9732';
         result.className = 'test-result result-warning';
       } else {
-        result.textContent = ' DNS安全';
+        result.textContent = '\u2705 DNS\u5B89\u5168';
         result.className = 'test-result result-safe';
       }
     }
     
     async function detectOutbound() {
       const result = document.getElementById('outboundResult');
-      result.textContent = '检测中...';
+      result.textContent = '\u68C0\u6D4B\u4E2D...';
       
       await new Promise(resolve => setTimeout(resolve, 300));
-      result.textContent = ' 出口IP一致';
+      result.textContent = '\u2705 \u51FA\u53E3IP\u4E00\u81F4';
       result.className = 'test-result result-safe';
     }
     
     async function detectGeo() {
       const result = document.getElementById('geoResult');
-      result.textContent = '检测中...';
+      result.textContent = '\u68C0\u6D4B\u4E2D...';
       
       await new Promise(resolve => setTimeout(resolve, 300));
-      result.textContent = ' 位置一致';
+      result.textContent = '\u2705 \u4F4D\u7F6E\u4E00\u81F4';
       result.className = 'test-result result-safe';
     }
     
     async function detectVPNStatus() {
       const result = document.getElementById('vpnStatus');
-      result.textContent = '检测中...';
+      result.textContent = '\u68C0\u6D4B\u4E2D...';
       
       await new Promise(resolve => setTimeout(resolve, 400));
       
       const isVPN = Math.random() > 0.5;
       if (isVPN) {
-        result.textContent = ' VPN已连接';
+        result.textContent = '\u2705 VPN\u5DF2\u8FDE\u63A5';
         result.className = 'test-result result-safe';
       } else {
-        result.textContent = ' 未检测到VPN';
+        result.textContent = '\u26A0\uFE0F \u672A\u68C0\u6D4B\u5230VPN';
         result.className = 'test-result result-risk';
       }
     }
-  </script>
+  <\/script>
 </body>
 </html>`;
 }
-
-function getDNSLeakPage(): string {
+__name(getLeakDetectPage, "getLeakDetectPage");
+function getDNSLeakPage() {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>DNS泄露检测 - IPPure</title>
+  <title>DNS\u6CC4\u9732\u68C0\u6D4B - IPPure</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
@@ -1321,46 +1230,46 @@ function getDNSLeakPage(): string {
     <nav>
       <a href="/" class="logo">IPPure</a>
       <ul>
-        <li><a href="/">IP检测</a></li>
-        <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
-        <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
-        <li><a href="/fingerprint.html">指纹检测</a></li>
-        <li><a href="/about.html">关于</a></li>
+        <li><a href="/">IP\u68C0\u6D4B</a></li>
+        <li><a href="/IP-Outbound-Detect.html">\u51FA\u53E3\u68C0\u6D4B</a></li>
+        <li><a href="/IP-leak-Detect.html">VPN\u6EAF\u6E90</a></li>
+        <li><a href="/fingerprint.html">\u6307\u7EB9\u68C0\u6D4B</a></li>
+        <li><a href="/about.html">\u5173\u4E8E</a></li>
       </ul>
     </nav>
   </header>
   <div class="container">
-    <h1>DNS泄露检测</h1>
+    <h1>DNS\u6CC4\u9732\u68C0\u6D4B</h1>
     <div class="info-box">
-      <h3>核心概念</h3>
-      <p><strong>DNS域名解析</strong>把域名转成 IP例baidu.com => 110.242.68.66TCP/IP 通信必须知道IP才能建立连接</p>
-      <p><strong>DNS泄露</strong>本应由代理跳板/魔法服务器完成的DNS查询从本地网络发出或曾发出暴露了访问意图</p>
-      <p><strong>FakeIP</strong>给本机返回占位的假 IP常用198.18.x.x本机用假 IP 建连真正的解析由代理端完成避免本地泄露</p>
+      <h3>\u6838\u5FC3\u6982\u5FF5</h3>
+      <p><strong>DNS\uFF08\u57DF\u540D\u89E3\u6790\uFF09</strong>\uFF1A\u628A\u57DF\u540D\u8F6C\u6210 IP\uFF08\u4F8B\uFF1Abaidu.com => 110.242.68.66\uFF09\uFF1BTCP/IP \u901A\u4FE1\u5FC5\u987B\u77E5\u9053IP\u624D\u80FD\u5EFA\u7ACB\u8FDE\u63A5\u3002</p>
+      <p><strong>DNS\u6CC4\u9732</strong>\uFF1A\u672C\u5E94\u7531\u4EE3\u7406\uFF08\u8DF3\u677F/\u9B54\u6CD5\u670D\u52A1\u5668\uFF09\u5B8C\u6210\u7684DNS\u67E5\u8BE2\uFF0C\u4ECE\u672C\u5730\u7F51\u7EDC\u53D1\u51FA\u6216\u66FE\u53D1\u51FA\uFF0C\u66B4\u9732\u4E86\u8BBF\u95EE\u610F\u56FE\u3002</p>
+      <p><strong>FakeIP</strong>\uFF1A\u7ED9\u672C\u673A\u8FD4\u56DE\u5360\u4F4D\u7684\u5047 IP\uFF08\u5E38\u7528198.18.x.x\uFF09\uFF0C\u672C\u673A\u7528\u5047 IP \u5EFA\u8FDE\uFF0C\u771F\u6B63\u7684\u89E3\u6790\u7531\u4EE3\u7406\u7AEF\u5B8C\u6210\uFF0C\u907F\u514D\u672C\u5730\u6CC4\u9732\u3002</p>
     </div>
     <div class="info-box">
-      <h3>为什么会发生DNS泄露</h3>
-      <p>本机在建立TCP连接前会发DNS使用代理时若流程或路由不当就会在本地触发解析</p>
-      <p>某些路由规则需要把域名解析到IP来做 IP 匹配fallback 情形这类情况最容易导致本地 DNS 请求</p>
+      <h3>\u4E3A\u4EC0\u4E48\u4F1A\u53D1\u751FDNS\u6CC4\u9732</h3>
+      <p>\u672C\u673A\u5728\u5EFA\u7ACBTCP\u8FDE\u63A5\u524D\u4F1A\u53D1DNS\uFF1B\u4F7F\u7528\u4EE3\u7406\u65F6\u82E5\u6D41\u7A0B\u6216\u8DEF\u7531\u4E0D\u5F53\uFF0C\u5C31\u4F1A\u5728\u672C\u5730\u89E6\u53D1\u89E3\u6790\u3002</p>
+      <p>\u67D0\u4E9B\u8DEF\u7531\u89C4\u5219\u9700\u8981\u628A\u57DF\u540D\u89E3\u6790\u5230IP\u6765\u505A IP \u5339\u914D\uFF08fallback \u60C5\u5F62\uFF09\uFF0C\u8FD9\u7C7B\u60C5\u51B5\u6700\u5BB9\u6613\u5BFC\u81F4\u672C\u5730 DNS \u8BF7\u6C42\u3002</p>
     </div>
     <div class="info-box">
-      <h3>防止DNS泄露的实操建议</h3>
-      <p>1. 优先使用 Tun + FakeIP 模式让本地只拿到假IP真实解析在代理端进行</p>
-      <p>2. 路由优先使用域名匹配对会触发本地解析的场景启用no-resolve</p>
-      <p>3. 对被劫持或敏感域名强制走节点或为其指定独立 nameserver-policy</p>
+      <h3>\u9632\u6B62DNS\u6CC4\u9732\u7684\u5B9E\u64CD\u5EFA\u8BAE</h3>
+      <p>1. \u4F18\u5148\u4F7F\u7528 Tun + FakeIP \u6A21\u5F0F\uFF0C\u8BA9\u672C\u5730\u53EA\u62FF\u5230\u5047IP\uFF0C\u771F\u5B9E\u89E3\u6790\u5728\u4EE3\u7406\u7AEF\u8FDB\u884C\u3002</p>
+      <p>2. \u8DEF\u7531\u4F18\u5148\u4F7F\u7528\u57DF\u540D\u5339\u914D\uFF1B\u5BF9\u4F1A\u89E6\u53D1\u672C\u5730\u89E3\u6790\u7684\u573A\u666F\uFF0C\u542F\u7528no-resolve\u3002</p>
+      <p>3. \u5BF9\u88AB\u52AB\u6301\u6216\u654F\u611F\u57DF\u540D\uFF0C\u5F3A\u5236\u8D70\u8282\u70B9\u6216\u4E3A\u5176\u6307\u5B9A\u72EC\u7ACB nameserver-policy\u3002</p>
     </div>
   </div>
   <footer><p>&copy; 2024 IPPure</p></footer>
 </body>
 </html>`;
 }
-
-function getWebRTCPage(): string {
+__name(getDNSLeakPage, "getDNSLeakPage");
+function getWebRTCPage() {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>WebRTC泄露检测 - IPPure</title>
+  <title>WebRTC\u6CC4\u9732\u68C0\u6D4B - IPPure</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
@@ -1382,41 +1291,41 @@ function getWebRTCPage(): string {
     <nav>
       <a href="/" class="logo">IPPure</a>
       <ul>
-        <li><a href="/">IP检测</a></li>
-        <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
-        <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
-        <li><a href="/fingerprint.html">指纹检测</a></li>
-        <li><a href="/about.html">关于</a></li>
+        <li><a href="/">IP\u68C0\u6D4B</a></li>
+        <li><a href="/IP-Outbound-Detect.html">\u51FA\u53E3\u68C0\u6D4B</a></li>
+        <li><a href="/IP-leak-Detect.html">VPN\u6EAF\u6E90</a></li>
+        <li><a href="/fingerprint.html">\u6307\u7EB9\u68C0\u6D4B</a></li>
+        <li><a href="/about.html">\u5173\u4E8E</a></li>
       </ul>
     </nav>
   </header>
   <div class="container">
-    <h1>WebRTC泄露检测</h1>
+    <h1>WebRTC\u6CC4\u9732\u68C0\u6D4B</h1>
     <div class="info-box">
-      <p><strong>WebRTCWeb Real-Time Communication</strong>是浏览器提供的实时音视频与点对点数据通道技术<strong>WebRTC 泄露</strong>指的是在使用浏览器或某些应用时WebRTC 的连接流程ICE 候选交换意外暴露了本地或真实公网 IP 地址导致即便你在用 VPN/代理目标网站或第三方仍可能看到你的真实 IP 地址或局域网地址</p>
+      <p><strong>WebRTC\uFF08Web Real-Time Communication\uFF09</strong>\u662F\u6D4F\u89C8\u5668\u63D0\u4F9B\u7684\u5B9E\u65F6\u97F3\u89C6\u9891\u4E0E\u70B9\u5BF9\u70B9\u6570\u636E\u901A\u9053\u6280\u672F\u3002<strong>WebRTC \u6CC4\u9732</strong>\u6307\u7684\u662F\u5728\u4F7F\u7528\u6D4F\u89C8\u5668\u6216\u67D0\u4E9B\u5E94\u7528\u65F6\uFF0CWebRTC \u7684\u8FDE\u63A5\u6D41\u7A0B\uFF08ICE \u5019\u9009\u4EA4\u6362\uFF09\u610F\u5916\u66B4\u9732\u4E86\u672C\u5730\u6216\u771F\u5B9E\u516C\u7F51 IP \u5730\u5740\uFF0C\u5BFC\u81F4\u5373\u4FBF\u4F60\u5728\u7528 VPN/\u4EE3\u7406\uFF0C\u76EE\u6807\u7F51\u7AD9\u6216\u7B2C\u4E09\u65B9\u4ECD\u53EF\u80FD\u770B\u5230\u4F60\u7684\u771F\u5B9E IP \u5730\u5740\u6216\u5C40\u57DF\u7F51\u5730\u5740\u3002</p>
     </div>
     <div class="info-box">
-      <h3 style="color: #a855f7; margin-bottom: 12px;">Chrome扩展推荐</h3>
-      <p> 谷歌出品WebRTC Network Limiter</p>
-      <p> WebRTC Leak Prevent</p>
+      <h3 style="color: #a855f7; margin-bottom: 12px;">Chrome\u6269\u5C55\u63A8\u8350</h3>
+      <p>\u{1F449} \u8C37\u6B4C\u51FA\u54C1\uFF1AWebRTC Network Limiter</p>
+      <p>\u{1F449} WebRTC Leak Prevent</p>
     </div>
     <div class="info-box">
-      <h3 style="color: #a855f7; margin-bottom: 12px;">Firefox设置</h3>
-      <p> about:config 页面将media.peerconnection.enabled 首偏好设置设置为false来完全禁用WebRTC</p>
+      <h3 style="color: #a855f7; margin-bottom: 12px;">Firefox\u8BBE\u7F6E</h3>
+      <p>\u{1F449} about:config \u9875\u9762\u5C06media.peerconnection.enabled \u9996\u504F\u597D\u8BBE\u7F6E\u8BBE\u7F6E\u4E3Afalse\u6765\u5B8C\u5168\u7981\u7528WebRTC\u3002</p>
     </div>
   </div>
   <footer><p>&copy; 2024 IPPure</p></footer>
 </body>
 </html>`;
 }
-
-function getNeighborsPage(): string {
+__name(getWebRTCPage, "getWebRTCPage");
+function getNeighborsPage() {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>聊天 - IPPure</title>
+  <title>\u804A\u5929 - IPPure</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
@@ -1469,30 +1378,30 @@ function getNeighborsPage(): string {
     <nav>
       <a href="/" class="logo">IPPure</a>
       <ul>
-        <li><a href="/">IP检测</a></li>
-        <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
-        <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
-        <li><a href="/fingerprint.html">指纹检测</a></li>
-        <li><a href="/about.html">关于</a></li>
+        <li><a href="/">IP\u68C0\u6D4B</a></li>
+        <li><a href="/IP-Outbound-Detect.html">\u51FA\u53E3\u68C0\u6D4B</a></li>
+        <li><a href="/IP-leak-Detect.html">VPN\u6EAF\u6E90</a></li>
+        <li><a href="/fingerprint.html">\u6307\u7EB9\u68C0\u6D4B</a></li>
+        <li><a href="/about.html">\u5173\u4E8E</a></li>
       </ul>
     </nav>
   </header>
   <div class="container">
     <div id="loginView" class="login-container">
       <div class="login-box">
-        <div class="login-title">登录聊天</div>
+        <div class="login-title">\u767B\u5F55\u804A\u5929</div>
         <div class="form-group">
-          <label class="form-label">邮箱地址</label>
-          <input type="email" id="emailInput" class="form-input" placeholder="请输入邮箱">
+          <label class="form-label">\u90AE\u7BB1\u5730\u5740</label>
+          <input type="email" id="emailInput" class="form-input" placeholder="\u8BF7\u8F93\u5165\u90AE\u7BB1">
         </div>
         <div class="form-group">
-          <label class="form-label">密码</label>
-          <input type="password" id="passwordInput" class="form-input" placeholder="请输入密码">
+          <label class="form-label">\u5BC6\u7801</label>
+          <input type="password" id="passwordInput" class="form-input" placeholder="\u8BF7\u8F93\u5165\u5BC6\u7801">
         </div>
-        <button id="loginBtn" class="login-btn">登录</button>
+        <button id="loginBtn" class="login-btn">\u767B\u5F55</button>
         <div id="loginError" class="error-msg"></div>
         <div class="register-link">
-          还没有账户<a href="https://mail.ygyang.uk/login" target="_blank">前往注册</a>
+          \u8FD8\u6CA1\u6709\u8D26\u6237\uFF1F<a href="https://mail.ygyang.uk/login" target="_blank">\u524D\u5F80\u6CE8\u518C</a>
         </div>
       </div>
     </div>
@@ -1500,20 +1409,20 @@ function getNeighborsPage(): string {
     <div id="chatView" style="display:none;">
       <div class="chat-container">
         <div class="chat-header">
-          <span class="chat-title"> 聊天</span>
+          <span class="chat-title">\u{1F4AC} \u804A\u5929</span>
           <div>
             <span id="userEmail" class="chat-user"></span>
-            <button id="logoutBtn" class="logout-btn">退出</button>
+            <button id="logoutBtn" class="logout-btn">\u9000\u51FA</button>
           </div>
         </div>
-        <div class="chat-warning"> 聊天记录仅显示和保存最近7天</div>
+        <div class="chat-warning">\u26A0\uFE0F \u804A\u5929\u8BB0\u5F55\u4EC5\u663E\u793A\u548C\u4FDD\u5B58\u6700\u8FD17\u5929</div>
         <div id="chatMessages" class="chat-messages">
-          <div class="loading">加载聊天记录...</div>
+          <div class="loading">\u52A0\u8F7D\u804A\u5929\u8BB0\u5F55...</div>
         </div>
         <div class="chat-input-area">
           <div class="input-row">
-            <input type="text" id="messageInput" class="chat-input" placeholder="输入消息...">
-            <button id="sendBtn" class="send-btn">发送</button>
+            <input type="text" id="messageInput" class="chat-input" placeholder="\u8F93\u5165\u6D88\u606F...">
+            <button id="sendBtn" class="send-btn">\u53D1\u9001</button>
           </div>
         </div>
       </div>
@@ -1558,10 +1467,10 @@ function getNeighborsPage(): string {
         if (data.messages && data.messages.length > 0) {
           renderMessages(data.messages);
         } else {
-          chatMessages.innerHTML = '<div style="text-align:center;color:#64748b;padding:40px;">暂无聊天记录开始聊天吧</div>';
+          chatMessages.innerHTML = '<div style="text-align:center;color:#64748b;padding:40px;">\u6682\u65E0\u804A\u5929\u8BB0\u5F55\uFF0C\u5F00\u59CB\u804A\u5929\u5427\uFF01</div>';
         }
       } catch (error) {
-        chatMessages.innerHTML = '<div style="text-align:center;color:#ef4444;padding:40px;">加载消息失败请刷新页面</div>';
+        chatMessages.innerHTML = '<div style="text-align:center;color:#ef4444;padding:40px;">\u52A0\u8F7D\u6D88\u606F\u5931\u8D25\uFF0C\u8BF7\u5237\u65B0\u9875\u9762</div>';
       }
     }
     
@@ -1585,13 +1494,13 @@ function getNeighborsPage(): string {
       const password = document.getElementById('passwordInput').value;
       
       if (!email || !password) {
-        loginError.textContent = '请输入邮箱和密码';
+        loginError.textContent = '\u8BF7\u8F93\u5165\u90AE\u7BB1\u548C\u5BC6\u7801';
         loginError.style.display = 'block';
         return;
       }
       
       loginBtn.disabled = true;
-      loginBtn.textContent = '登录中...';
+      loginBtn.textContent = '\u767B\u5F55\u4E2D...';
       loginError.style.display = 'none';
       
       try {
@@ -1603,15 +1512,15 @@ function getNeighborsPage(): string {
           localStorage.setItem('ippure_user', JSON.stringify(currentUser));
           showChatView();
         } else {
-          loginError.textContent = data.error || '登录失败';
+          loginError.textContent = data.error || '\u767B\u5F55\u5931\u8D25';
           loginError.style.display = 'block';
         }
       } catch (error) {
-        loginError.textContent = '登录服务暂不可用';
+        loginError.textContent = '\u767B\u5F55\u670D\u52A1\u6682\u4E0D\u53EF\u7528';
         loginError.style.display = 'block';
       } finally {
         loginBtn.disabled = false;
-        loginBtn.textContent = '登录';
+        loginBtn.textContent = '\u767B\u5F55';
       }
     });
     
@@ -1646,10 +1555,10 @@ function getNeighborsPage(): string {
           messageInput.value = '';
           loadMessages();
         } else {
-          alert(data.error || '发送失败');
+          alert(data.error || '\u53D1\u9001\u5931\u8D25');
         }
       } catch (error) {
-        alert('发送失败请检查网络连接');
+        alert('\u53D1\u9001\u5931\u8D25\uFF0C\u8BF7\u68C0\u67E5\u7F51\u7EDC\u8FDE\u63A5');
       } finally {
         sendBtn.disabled = false;
         messageInput.disabled = false;
@@ -1666,18 +1575,18 @@ function getNeighborsPage(): string {
     });
     
     checkLoginStatus();
-  </script>
+  <\/script>
 </body>
 </html>`;
 }
-
-function getIPCardPage(): string {
+__name(getNeighborsPage, "getNeighborsPage");
+function getIPCardPage() {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>IP信息卡片 - IPPure</title>
+  <title>IP\u4FE1\u606F\u5361\u7247 - IPPure</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
@@ -1700,38 +1609,38 @@ function getIPCardPage(): string {
     <nav>
       <a href="/" class="logo">IPPure</a>
       <ul>
-        <li><a href="/">IP检测</a></li>
-        <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
-        <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
-        <li><a href="/fingerprint.html">指纹检测</a></li>
-        <li><a href="/about.html">关于</a></li>
+        <li><a href="/">IP\u68C0\u6D4B</a></li>
+        <li><a href="/IP-Outbound-Detect.html">\u51FA\u53E3\u68C0\u6D4B</a></li>
+        <li><a href="/IP-leak-Detect.html">VPN\u6EAF\u6E90</a></li>
+        <li><a href="/fingerprint.html">\u6307\u7EB9\u68C0\u6D4B</a></li>
+        <li><a href="/about.html">\u5173\u4E8E</a></li>
       </ul>
     </nav>
   </header>
   <div class="container">
-    <h1>访客IP信息卡片</h1>
+    <h1>\u8BBF\u5BA2IP\u4FE1\u606F\u5361\u7247</h1>
     <div class="card-preview">
-      <img src="/v1/card" alt="IP信息卡片" />
+      <img src="/v1/card" alt="IP\u4FE1\u606F\u5361\u7247" />
     </div>
     <h2 style="color: #a855f7; margin-top: 30px;">Markdown</h2>
-    <div class="code-block"><code>[![访客IP信息卡片](https://ippure.com/v1/card)](https://ippure.com "点击查看IP信息")</code></div>
+    <div class="code-block"><code>[![\u8BBF\u5BA2IP\u4FE1\u606F\u5361\u7247](https://ippure.com/v1/card)](https://ippure.com "\u70B9\u51FB\u67E5\u770BIP\u4FE1\u606F")</code></div>
     <h2 style="color: #a855f7; margin-top: 30px;">BBCode</h2>
     <div class="code-block"><code>[url=https://ippure.com][img]https://ippure.com/v1/card[/img][/url]</code></div>
     <h2 style="color: #a855f7; margin-top: 30px;">HTML</h2>
-    <div class="code-block"><code>&lt;a href="https://ippure.com" target="_blank"&gt;&lt;img src="https://ippure.com/v1/card" alt="IP信息卡片" /&gt;&lt;/a&gt;</code></div>
+    <div class="code-block"><code>&lt;a href="https://ippure.com" target="_blank"&gt;&lt;img src="https://ippure.com/v1/card" alt="IP\u4FE1\u606F\u5361\u7247" /&gt;&lt;/a&gt;</code></div>
   </div>
   <footer><p>&copy; 2024 IPPure</p></footer>
 </body>
 </html>`;
 }
-
-function getAPIPage(): string {
+__name(getIPCardPage, "getIPCardPage");
+function getAPIPage() {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>API接口 - IPPure</title>
+  <title>API\u63A5\u53E3 - IPPure</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
@@ -1754,31 +1663,31 @@ function getAPIPage(): string {
     <nav>
       <a href="/" class="logo">IPPure</a>
       <ul>
-        <li><a href="/">IP检测</a></li>
-        <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
-        <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
-        <li><a href="/fingerprint.html">指纹检测</a></li>
-        <li><a href="/about.html">关于</a></li>
+        <li><a href="/">IP\u68C0\u6D4B</a></li>
+        <li><a href="/IP-Outbound-Detect.html">\u51FA\u53E3\u68C0\u6D4B</a></li>
+        <li><a href="/IP-leak-Detect.html">VPN\u6EAF\u6E90</a></li>
+        <li><a href="/fingerprint.html">\u6307\u7EB9\u68C0\u6D4B</a></li>
+        <li><a href="/about.html">\u5173\u4E8E</a></li>
       </ul>
     </nav>
   </header>
   <div class="container">
-    <h1>我的IP信息API</h1>
+    <h1>\u6211\u7684IP\u4FE1\u606FAPI</h1>
     <div class="info-box">
-      <p>IPPure提供一个公开API可以显示调用API的IP的位置信息ASN信息IP风险系数是否原生IP是否机房IP</p>
+      <p>IPPure\u63D0\u4F9B\u4E00\u4E2A\u516C\u5F00API\uFF0C\u53EF\u4EE5\u663E\u793A\u8C03\u7528API\u7684IP\u7684\u4F4D\u7F6E\u4FE1\u606F\u3001ASN\u4FE1\u606F\u3001IP\u98CE\u9669\u7CFB\u6570\u3001\u662F\u5426\u539F\u751FIP\u3001\u662F\u5426\u673A\u623FIP</p>
     </div>
-    <h2>接口地址</h2>
+    <h2>\u63A5\u53E3\u5730\u5740</h2>
     <div class="code-block"><code>curl -L https://ippure.com/v1/info</code></div>
-    <h2>示例输出</h2>
+    <h2>\u793A\u4F8B\u8F93\u51FA</h2>
     <div class="code-block"><code>{
   "ip": "104.28.123.123",
   "asn": 13335,
   "asOrganization": "Cloudflare, Inc.",
-  "country": "中国",
+  "country": "\u4E2D\u56FD",
   "countryCode": "CN",
-  "region": "湖南省",
+  "region": "\u6E56\u5357\u7701",
   "regionCode": "HN",
-  "city": "长沙市",
+  "city": "\u957F\u6C99\u5E02",
   "timezone": "Asia/Shanghai",
   "longitude": "-118.24368",
   "latitude": "34.05223",
@@ -1793,14 +1702,14 @@ function getAPIPage(): string {
 </body>
 </html>`;
 }
-
-function getAboutPage(): string {
+__name(getAPIPage, "getAPIPage");
+function getAboutPage() {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>关于本站 - IPPure</title>
+  <title>\u5173\u4E8E\u672C\u7AD9 - IPPure</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
@@ -1828,86 +1737,86 @@ function getAboutPage(): string {
     <nav>
       <a href="/" class="logo">IPPure</a>
       <ul>
-        <li><a href="/">IP检测</a></li>
-        <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
-        <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
-        <li><a href="/fingerprint.html">指纹检测</a></li>
-        <li><a href="/about.html">关于</a></li>
+        <li><a href="/">IP\u68C0\u6D4B</a></li>
+        <li><a href="/IP-Outbound-Detect.html">\u51FA\u53E3\u68C0\u6D4B</a></li>
+        <li><a href="/IP-leak-Detect.html">VPN\u6EAF\u6E90</a></li>
+        <li><a href="/fingerprint.html">\u6307\u7EB9\u68C0\u6D4B</a></li>
+        <li><a href="/about.html">\u5173\u4E8E</a></li>
       </ul>
     </nav>
   </header>
   <div class="container">
-    <h1>关于本站</h1>
+    <h1>\u5173\u4E8E\u672C\u7AD9</h1>
     <div class="info-box">
-      <p>IPPure努力做最专业且易用的IP纯净度检测软件把所有常用的IP和浏览器检测工具打包到一个网站提供一站式的查询服务</p>
-      <p style="margin-top: 15px;">本项目灵感来源于 <span class="highlight">https://ippure.com/</span>旨在提供类似功能的开源实现</p>
-      <p style="margin-top: 15px;">对于数据不准确的反馈我们会积极校正数据并且公开校正过程保证公开透明杜绝数据作弊</p>
+      <p>IPPure\u52AA\u529B\u505A\u6700\u4E13\u4E1A\u4E14\u6613\u7528\u7684IP\u7EAF\u51C0\u5EA6\u68C0\u6D4B\u8F6F\u4EF6\uFF0C\u628A\u6240\u6709\u5E38\u7528\u7684IP\u548C\u6D4F\u89C8\u5668\u68C0\u6D4B\u5DE5\u5177\u6253\u5305\u5230\u4E00\u4E2A\u7F51\u7AD9\uFF0C\u63D0\u4F9B\u4E00\u7AD9\u5F0F\u7684\u67E5\u8BE2\u670D\u52A1\u3002</p>
+      <p style="margin-top: 15px;">\u672C\u9879\u76EE\u7075\u611F\u6765\u6E90\u4E8E <span class="highlight">https://ippure.com/</span>\uFF0C\u65E8\u5728\u63D0\u4F9B\u7C7B\u4F3C\u529F\u80FD\u7684\u5F00\u6E90\u5B9E\u73B0\u3002</p>
+      <p style="margin-top: 15px;">\u5BF9\u4E8E\u6570\u636E\u4E0D\u51C6\u786E\u7684\u53CD\u9988\uFF0C\u6211\u4EEC\u4F1A\u79EF\u6781\u6821\u6B63\u6570\u636E\uFF0C\u5E76\u4E14\u516C\u5F00\u6821\u6B63\u8FC7\u7A0B\uFF0C\u4FDD\u8BC1\u516C\u5F00\u900F\u660E\uFF0C\u675C\u7EDD\u6570\u636E\u4F5C\u5F0A\u3002</p>
     </div>
     
-    <h2>主要功能</h2>
+    <h2>\u4E3B\u8981\u529F\u80FD</h2>
     <div class="info-box">
       <ul>
-        <li> IP定位信息查询 - 多数据源验证获取准确IP定位</li>
-        <li> IP风险信息查询 - IPPure系数和Cloudflare系数评估</li>
-        <li> 国旗显示 - 根据IP所属国家显示对应国旗</li>
-        <li> 浏览器指纹检测 - 评估隐私保护等级</li>
-        <li> VPN泄露检测 - WebRTCDNS出口IP分布检测</li>
-        <li> IP信息卡片 - 生成访客IP信息卡片图片</li>
+        <li>\u2022 IP\u5B9A\u4F4D\u4FE1\u606F\u67E5\u8BE2 - \u591A\u6570\u636E\u6E90\u9A8C\u8BC1\uFF0C\u83B7\u53D6\u51C6\u786EIP\u5B9A\u4F4D</li>
+        <li>\u2022 IP\u98CE\u9669\u4FE1\u606F\u67E5\u8BE2 - IPPure\u7CFB\u6570\u548CCloudflare\u7CFB\u6570\u8BC4\u4F30</li>
+        <li>\u2022 \u56FD\u65D7\u663E\u793A - \u6839\u636EIP\u6240\u5C5E\u56FD\u5BB6\u663E\u793A\u5BF9\u5E94\u56FD\u65D7</li>
+        <li>\u2022 \u6D4F\u89C8\u5668\u6307\u7EB9\u68C0\u6D4B - \u8BC4\u4F30\u9690\u79C1\u4FDD\u62A4\u7B49\u7EA7</li>
+        <li>\u2022 VPN\u6CC4\u9732\u68C0\u6D4B - WebRTC\u3001DNS\u3001\u51FA\u53E3IP\u5206\u5E03\u68C0\u6D4B</li>
+        <li>\u2022 IP\u4FE1\u606F\u5361\u7247 - \u751F\u6210\u8BBF\u5BA2IP\u4FE1\u606F\u5361\u7247\u56FE\u7247</li>
       </ul>
     </div>
     
-    <h2>技术架构</h2>
+    <h2>\u6280\u672F\u67B6\u6784</h2>
     <div class="info-box">
       <ul>
-        <li> Cloudflare Workers - 边缘计算部署</li>
-        <li> TypeScript - 类型安全的前端开发</li>
-        <li> Cloudflare KV - 聊天记录存储</li>
-        <li> cloud-mail - 用户认证系统集成 (<a href="https://github.com/maillab/cloud-mail" target="_blank" style="color: #667eea;">GitHub</a>)</li>
-        <li> 多数据源整合 - IP2LocationDB-IPMaxMindIPIP</li>
+        <li>\u2022 Cloudflare Workers - \u8FB9\u7F18\u8BA1\u7B97\u90E8\u7F72</li>
+        <li>\u2022 TypeScript - \u7C7B\u578B\u5B89\u5168\u7684\u524D\u7AEF\u5F00\u53D1</li>
+        <li>\u2022 Cloudflare KV - \u804A\u5929\u8BB0\u5F55\u5B58\u50A8</li>
+        <li>\u2022 cloud-mail - \u7528\u6237\u8BA4\u8BC1\u7CFB\u7EDF\u96C6\u6210 (<a href="https://github.com/maillab/cloud-mail" target="_blank" style="color: #667eea;">GitHub</a>)</li>
+        <li>\u2022 \u591A\u6570\u636E\u6E90\u6574\u5408 - IP2Location\u3001DB-IP\u3001MaxMind\u3001IPIP</li>
       </ul>
     </div>
     
-    <h2>账户系统</h2>
+    <h2>\u8D26\u6237\u7CFB\u7EDF</h2>
     <div class="info-box">
-      <p>本项目集成 <span class="highlight">cloud-mail</span> 账户系统提供安全可靠的用户认证服务</p>
+      <p>\u672C\u9879\u76EE\u96C6\u6210 <span class="highlight">cloud-mail</span> \u8D26\u6237\u7CFB\u7EDF\uFF0C\u63D0\u4F9B\u5B89\u5168\u53EF\u9760\u7684\u7528\u6237\u8BA4\u8BC1\u670D\u52A1\uFF1A</p>
       <ul style="margin-top: 15px;">
-        <li> 页面内直接登录无需跳转</li>
-        <li> 注册跳转至 <a href="https://mail.ygyang.uk/login" target="_blank" style="color: #667eea;">cloud-mail</a> 注册页面</li>
-        <li> 聊天记录存储在 Cloudflare KV 中</li>
-        <li> 聊天记录仅保留最近7天自动清理</li>
+        <li>\u2022 \u9875\u9762\u5185\u76F4\u63A5\u767B\u5F55\uFF0C\u65E0\u9700\u8DF3\u8F6C</li>
+        <li>\u2022 \u6CE8\u518C\u8DF3\u8F6C\u81F3 <a href="https://mail.ygyang.uk/login" target="_blank" style="color: #667eea;">cloud-mail</a> \u6CE8\u518C\u9875\u9762</li>
+        <li>\u2022 \u804A\u5929\u8BB0\u5F55\u5B58\u50A8\u5728 Cloudflare KV \u4E2D</li>
+        <li>\u2022 \u804A\u5929\u8BB0\u5F55\u4EC5\u4FDD\u7559\u6700\u8FD17\u5929\uFF0C\u81EA\u52A8\u6E05\u7406</li>
       </ul>
     </div>
     
-    <h2>目标用户</h2>
+    <h2>\u76EE\u6807\u7528\u6237</h2>
     <div class="info-box">
       <ul>
-        <li> 流媒体作者</li>
-        <li> AI使用者</li>
-        <li> 跨境电商</li>
-        <li> 开发调试人员</li>
-        <li> 网络运维用户</li>
+        <li>\u2022 \u6D41\u5A92\u4F53\u4F5C\u8005</li>
+        <li>\u2022 AI\u4F7F\u7528\u8005</li>
+        <li>\u2022 \u8DE8\u5883\u7535\u5546</li>
+        <li>\u2022 \u5F00\u53D1\u8C03\u8BD5\u4EBA\u5458</li>
+        <li>\u2022 \u7F51\u7EDC\u8FD0\u7EF4\u7528\u6237</li>
       </ul>
     </div>
     
-    <h2>联系我们</h2>
+    <h2>\u8054\u7CFB\u6211\u4EEC</h2>
     <div class="info-box">
-      <p>如有问题或建议请通过以下方式联系我们</p>
-      <p style="margin-top: 15px;"> 电子邮件<a href="mailto:ygyang@ygyang.uk" class="contact-link">ygyang@ygyang.uk</a></p>
-      <p style="margin-top: 15px;"> GitHub<a href="https://github.com/ygyang2023/ippure" target="_blank" class="contact-link">https://github.com/ygyang2023/ippure</a></p>
+      <p>\u5982\u6709\u95EE\u9898\u6216\u5EFA\u8BAE\uFF0C\u8BF7\u901A\u8FC7\u4EE5\u4E0B\u65B9\u5F0F\u8054\u7CFB\u6211\u4EEC\uFF1A</p>
+      <p style="margin-top: 15px;">\u{1F4E7} \u7535\u5B50\u90AE\u4EF6\uFF1A<a href="mailto:ygyang@ygyang.uk" class="contact-link">ygyang@ygyang.uk</a></p>
+      <p style="margin-top: 15px;">\u{1F4C2} GitHub\uFF1A<a href="https://github.com/ygyang2023/ippure" target="_blank" class="contact-link">https://github.com/ygyang2023/ippure</a></p>
     </div>
   </div>
-  <footer><p>&copy; 2024 IPPure | <a href="/terms-privacy.html" style="color: #a855f7;">使用条款与隐私说明</a></p></footer>
+  <footer><p>&copy; 2024 IPPure | <a href="/terms-privacy.html" style="color: #a855f7;">\u4F7F\u7528\u6761\u6B3E\u4E0E\u9690\u79C1\u8BF4\u660E</a></p></footer>
 </body>
 </html>`;
 }
-
-function getFAQPage(): string {
+__name(getAboutPage, "getAboutPage");
+function getFAQPage() {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>常见问题 - IPPure</title>
+  <title>\u5E38\u89C1\u95EE\u9898 - IPPure</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
@@ -1929,41 +1838,41 @@ function getFAQPage(): string {
     <nav>
       <a href="/" class="logo">IPPure</a>
       <ul>
-        <li><a href="/">IP检测</a></li>
-        <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
-        <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
-        <li><a href="/fingerprint.html">指纹检测</a></li>
-        <li><a href="/about.html">关于</a></li>
+        <li><a href="/">IP\u68C0\u6D4B</a></li>
+        <li><a href="/IP-Outbound-Detect.html">\u51FA\u53E3\u68C0\u6D4B</a></li>
+        <li><a href="/IP-leak-Detect.html">VPN\u6EAF\u6E90</a></li>
+        <li><a href="/fingerprint.html">\u6307\u7EB9\u68C0\u6D4B</a></li>
+        <li><a href="/about.html">\u5173\u4E8E</a></li>
       </ul>
     </nav>
   </header>
   <div class="container">
-    <h1>常见问题</h1>
+    <h1>\u5E38\u89C1\u95EE\u9898</h1>
     <div class="faq-item">
-      <h3>什么是IP纯净度</h3>
-      <p>IP纯净度指的是IP被标记为数据中心/机房IP的程度纯净的IP通常是家庭宽带或移动网络IP不容易被网站识别为代理或VPN</p>
+      <h3>\u4EC0\u4E48\u662FIP\u7EAF\u51C0\u5EA6\uFF1F</h3>
+      <p>IP\u7EAF\u51C0\u5EA6\u6307\u7684\u662FIP\u88AB\u6807\u8BB0\u4E3A\u6570\u636E\u4E2D\u5FC3/\u673A\u623FIP\u7684\u7A0B\u5EA6\u3002\u7EAF\u51C0\u7684IP\u901A\u5E38\u662F\u5BB6\u5EAD\u5BBD\u5E26\u6216\u79FB\u52A8\u7F51\u7EDCIP\uFF0C\u4E0D\u5BB9\u6613\u88AB\u7F51\u7AD9\u8BC6\u522B\u4E3A\u4EE3\u7406\u6216VPN\u3002</p>
     </div>
     <div class="faq-item">
-      <h3>为什么需要检测IP纯净度</h3>
-      <p>使用不纯净的IP访问流媒体AI服务等可能遭遇风控拦截或直接拒绝服务检测IP纯净度可以帮助您选择合适的出口IP</p>
+      <h3>\u4E3A\u4EC0\u4E48\u9700\u8981\u68C0\u6D4BIP\u7EAF\u51C0\u5EA6\uFF1F</h3>
+      <p>\u4F7F\u7528\u4E0D\u7EAF\u51C0\u7684IP\u8BBF\u95EE\u6D41\u5A92\u4F53\u3001AI\u670D\u52A1\u7B49\u53EF\u80FD\u906D\u9047\u98CE\u63A7\u62E6\u622A\u6216\u76F4\u63A5\u62D2\u7EDD\u670D\u52A1\u3002\u68C0\u6D4BIP\u7EAF\u51C0\u5EA6\u53EF\u4EE5\u5E2E\u52A9\u60A8\u9009\u62E9\u5408\u9002\u7684\u51FA\u53E3IP\u3002</p>
     </div>
     <div class="faq-item">
-      <h3>数据不准确怎么办</h3>
-      <p>您可以通过联系方式向我们反馈并提供参考依据我们会积极校正并公开校正过程</p>
+      <h3>\u6570\u636E\u4E0D\u51C6\u786E\u600E\u4E48\u529E\uFF1F</h3>
+      <p>\u60A8\u53EF\u4EE5\u901A\u8FC7\u8054\u7CFB\u65B9\u5F0F\u5411\u6211\u4EEC\u53CD\u9988\uFF0C\u5E76\u63D0\u4F9B\u53C2\u8003\u4F9D\u636E\u3002\u6211\u4EEC\u4F1A\u79EF\u6781\u6821\u6B63\u5E76\u516C\u5F00\u6821\u6B63\u8FC7\u7A0B\u3002</p>
     </div>
   </div>
   <footer><p>&copy; 2024 IPPure</p></footer>
 </body>
 </html>`;
 }
-
-function getCorrectionPage(): string {
+__name(getFAQPage, "getFAQPage");
+function getCorrectionPage() {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>数据纠正记录 - IPPure</title>
+  <title>\u6570\u636E\u7EA0\u6B63\u8BB0\u5F55 - IPPure</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
@@ -1985,41 +1894,41 @@ function getCorrectionPage(): string {
     <nav>
       <a href="/" class="logo">IPPure</a>
       <ul>
-        <li><a href="/">IP检测</a></li>
-        <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
-        <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
-        <li><a href="/fingerprint.html">指纹检测</a></li>
-        <li><a href="/about.html">关于</a></li>
+        <li><a href="/">IP\u68C0\u6D4B</a></li>
+        <li><a href="/IP-Outbound-Detect.html">\u51FA\u53E3\u68C0\u6D4B</a></li>
+        <li><a href="/IP-leak-Detect.html">VPN\u6EAF\u6E90</a></li>
+        <li><a href="/fingerprint.html">\u6307\u7EB9\u68C0\u6D4B</a></li>
+        <li><a href="/about.html">\u5173\u4E8E</a></li>
       </ul>
     </nav>
   </header>
   <div class="container">
-    <h1>数据纠正记录</h1>
+    <h1>\u6570\u636E\u7EA0\u6B63\u8BB0\u5F55</h1>
     <div class="info-box">
-      <h2>数据纠正说明</h2>
-      <p>当网站查询结果有错误时欢迎向网站管理员反馈</p>
-      <p style="margin-top: 10px;">为了保障公开透明所有的数据纠正记录都会在此汇总</p>
+      <h2>\u6570\u636E\u7EA0\u6B63\u8BF4\u660E</h2>
+      <p>\u5F53\u7F51\u7AD9\u67E5\u8BE2\u7ED3\u679C\u6709\u9519\u8BEF\u65F6\uFF0C\u6B22\u8FCE\u5411\u7F51\u7AD9\u7BA1\u7406\u5458\u53CD\u9988</p>
+      <p style="margin-top: 10px;">\u4E3A\u4E86\u4FDD\u969C\u516C\u5F00\u900F\u660E\uFF0C\u6240\u6709\u7684\u6570\u636E\u7EA0\u6B63\u8BB0\u5F55\u90FD\u4F1A\u5728\u6B64\u6C47\u603B\u3002</p>
     </div>
     <div class="info-box">
-      <h2>注意</h2>
-      <p> IP基本信息数据集来自于互联网如cloudflareip2locationdb-ip等</p>
-      <p> IP基本数据的纠正需要向源头反馈网站会定期拉取最新数据</p>
-      <p> 这里的数据纠正主要指的是IP类型IP用途风险系数</p>
-      <p> 数据纠正需要提供一定的参考依据比如其他IP查询网站的数据网络设备照片等</p>
+      <h2>\u6CE8\u610F</h2>
+      <p>\u2022 IP\u57FA\u672C\u4FE1\u606F\u6570\u636E\u96C6\u6765\u81EA\u4E8E\u4E92\u8054\u7F51\uFF0C\u5982cloudflare\u3001ip2location\u3001db-ip\u7B49</p>
+      <p>\u2022 IP\u57FA\u672C\u6570\u636E\u7684\u7EA0\u6B63\u9700\u8981\u5411\u6E90\u5934\u53CD\u9988\uFF0C\u7F51\u7AD9\u4F1A\u5B9A\u671F\u62C9\u53D6\u6700\u65B0\u6570\u636E</p>
+      <p>\u2022 \u8FD9\u91CC\u7684\u6570\u636E\u7EA0\u6B63\u4E3B\u8981\u6307\u7684\u662F\uFF1AIP\u7C7B\u578B\u3001IP\u7528\u9014\u3001\u98CE\u9669\u7CFB\u6570</p>
+      <p>\u2022 \u6570\u636E\u7EA0\u6B63\u9700\u8981\u63D0\u4F9B\u4E00\u5B9A\u7684\u53C2\u8003\u4F9D\u636E\uFF0C\u6BD4\u5982\uFF1A\u5176\u4ED6IP\u67E5\u8BE2\u7F51\u7AD9\u7684\u6570\u636E\u3001\u7F51\u7EDC\u8BBE\u5907\u7167\u7247\u7B49</p>
     </div>
   </div>
   <footer><p>&copy; 2024 IPPure</p></footer>
 </body>
 </html>`;
 }
-
-function getChangelogPage(): string {
+__name(getCorrectionPage, "getCorrectionPage");
+function getChangelogPage() {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>功能更新日志 - IPPure</title>
+  <title>\u529F\u80FD\u66F4\u65B0\u65E5\u5FD7 - IPPure</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
@@ -2041,33 +1950,33 @@ function getChangelogPage(): string {
     <nav>
       <a href="/" class="logo">IPPure</a>
       <ul>
-        <li><a href="/">IP检测</a></li>
-        <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
-        <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
-        <li><a href="/fingerprint.html">指纹检测</a></li>
-        <li><a href="/about.html">关于</a></li>
+        <li><a href="/">IP\u68C0\u6D4B</a></li>
+        <li><a href="/IP-Outbound-Detect.html">\u51FA\u53E3\u68C0\u6D4B</a></li>
+        <li><a href="/IP-leak-Detect.html">VPN\u6EAF\u6E90</a></li>
+        <li><a href="/fingerprint.html">\u6307\u7EB9\u68C0\u6D4B</a></li>
+        <li><a href="/about.html">\u5173\u4E8E</a></li>
       </ul>
     </nav>
   </header>
   <div class="container">
-    <h1>功能更新日志</h1>
+    <h1>\u529F\u80FD\u66F4\u65B0\u65E5\u5FD7</h1>
     <div class="changelog-item">
       <span class="changelog-date">2024-01-01</span>
-      <p class="changelog-content">初始版本发布包含IP检测出口检测指纹检测等核心功能</p>
+      <p class="changelog-content">\u521D\u59CB\u7248\u672C\u53D1\u5E03\uFF0C\u5305\u542BIP\u68C0\u6D4B\u3001\u51FA\u53E3\u68C0\u6D4B\u3001\u6307\u7EB9\u68C0\u6D4B\u7B49\u6838\u5FC3\u529F\u80FD</p>
     </div>
   </div>
   <footer><p>&copy; 2024 IPPure</p></footer>
 </body>
 </html>`;
 }
-
-function getContactPage(): string {
+__name(getChangelogPage, "getChangelogPage");
+function getContactPage() {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>联系方式 - IPPure</title>
+  <title>\u8054\u7CFB\u65B9\u5F0F - IPPure</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
@@ -2090,24 +1999,24 @@ function getContactPage(): string {
     <nav>
       <a href="/" class="logo">IPPure</a>
       <ul>
-        <li><a href="/">IP检测</a></li>
-        <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
-        <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
-        <li><a href="/fingerprint.html">指纹检测</a></li>
-        <li><a href="/about.html">关于</a></li>
+        <li><a href="/">IP\u68C0\u6D4B</a></li>
+        <li><a href="/IP-Outbound-Detect.html">\u51FA\u53E3\u68C0\u6D4B</a></li>
+        <li><a href="/IP-leak-Detect.html">VPN\u6EAF\u6E90</a></li>
+        <li><a href="/fingerprint.html">\u6307\u7EB9\u68C0\u6D4B</a></li>
+        <li><a href="/about.html">\u5173\u4E8E</a></li>
       </ul>
     </nav>
   </header>
   <div class="container">
-    <h1>联系方式</h1>
+    <h1>\u8054\u7CFB\u65B9\u5F0F</h1>
     <div class="contact-box">
       <div class="contact-item">
-        <div class="contact-label">数据纠错反馈</div>
-        <div class="contact-value">如发现IP数据有误请提供其他查询源的数据对比或设备照片作为参考依据</div>
+        <div class="contact-label">\u6570\u636E\u7EA0\u9519\u53CD\u9988</div>
+        <div class="contact-value">\u5982\u53D1\u73B0IP\u6570\u636E\u6709\u8BEF\uFF0C\u8BF7\u63D0\u4F9B\u5176\u4ED6\u67E5\u8BE2\u6E90\u7684\u6570\u636E\u5BF9\u6BD4\u6216\u8BBE\u5907\u7167\u7247\u4F5C\u4E3A\u53C2\u8003\u4F9D\u636E\u3002</div>
       </div>
       <div class="contact-item">
-        <div class="contact-label">商务合作</div>
-        <div class="contact-value">请发送邮件至 ygyang@ygyang.uk</div>
+        <div class="contact-label">\u5546\u52A1\u5408\u4F5C</div>
+        <div class="contact-value">\u8BF7\u53D1\u9001\u90AE\u4EF6\u81F3 ygyang@ygyang.uk</div>
       </div>
     </div>
   </div>
@@ -2115,14 +2024,14 @@ function getContactPage(): string {
 </body>
 </html>`;
 }
-
-function getTermsPrivacyPage(): string {
+__name(getContactPage, "getContactPage");
+function getTermsPrivacyPage() {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>使用条款与隐私说明 - IPPure</title>
+  <title>\u4F7F\u7528\u6761\u6B3E\u4E0E\u9690\u79C1\u8BF4\u660E - IPPure</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
@@ -2144,26 +2053,31 @@ function getTermsPrivacyPage(): string {
     <nav>
       <a href="/" class="logo">IPPure</a>
       <ul>
-        <li><a href="/">IP检测</a></li>
-        <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
-        <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
-        <li><a href="/fingerprint.html">指纹检测</a></li>
-        <li><a href="/about.html">关于</a></li>
+        <li><a href="/">IP\u68C0\u6D4B</a></li>
+        <li><a href="/IP-Outbound-Detect.html">\u51FA\u53E3\u68C0\u6D4B</a></li>
+        <li><a href="/IP-leak-Detect.html">VPN\u6EAF\u6E90</a></li>
+        <li><a href="/fingerprint.html">\u6307\u7EB9\u68C0\u6D4B</a></li>
+        <li><a href="/about.html">\u5173\u4E8E</a></li>
       </ul>
     </nav>
   </header>
   <div class="container">
-    <h1>使用条款与隐私说明</h1>
+    <h1>\u4F7F\u7528\u6761\u6B3E\u4E0E\u9690\u79C1\u8BF4\u660E</h1>
     <div class="info-box">
-      <h2>使用条款</h2>
-      <p>IPPure仅提供IP检测服务用户在使用本服务时须遵守当地法律法规不得用于非法用途</p>
+      <h2>\u4F7F\u7528\u6761\u6B3E</h2>
+      <p>IPPure\u4EC5\u63D0\u4F9BIP\u68C0\u6D4B\u670D\u52A1\uFF0C\u7528\u6237\u5728\u4F7F\u7528\u672C\u670D\u52A1\u65F6\u987B\u9075\u5B88\u5F53\u5730\u6CD5\u5F8B\u6CD5\u89C4\uFF0C\u4E0D\u5F97\u7528\u4E8E\u975E\u6CD5\u7528\u9014\u3002</p>
     </div>
     <div class="info-box">
-      <h2>隐私说明</h2>
-      <p>IPPure不会记录用户的浏览行为和个人信息我们仅收集访问时的IP地址用于检测目的且不会与第三方共享</p>
+      <h2>\u9690\u79C1\u8BF4\u660E</h2>
+      <p>IPPure\u4E0D\u4F1A\u8BB0\u5F55\u7528\u6237\u7684\u6D4F\u89C8\u884C\u4E3A\u548C\u4E2A\u4EBA\u4FE1\u606F\u3002\u6211\u4EEC\u4EC5\u6536\u96C6\u8BBF\u95EE\u65F6\u7684IP\u5730\u5740\u7528\u4E8E\u68C0\u6D4B\u76EE\u7684\uFF0C\u4E14\u4E0D\u4F1A\u4E0E\u7B2C\u4E09\u65B9\u5171\u4EAB\u3002</p>
     </div>
   </div>
   <footer><p>&copy; 2024 IPPure</p></footer>
 </body>
 </html>`;
 }
+__name(getTermsPrivacyPage, "getTermsPrivacyPage");
+export {
+  index_default as default
+};
+//# sourceMappingURL=index.js.map
