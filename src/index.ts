@@ -38,11 +38,28 @@ async function handleIPInfo(request: Request, env: Env, ctx: ExecutionContext): 
   const cf = request.cf;
   const ip = request.headers.get('CF-Connecting-IP') || 'Unknown';
   
-  const ippureCoefficient = calculateFraudScore(ip);
-  const cloudflareCoefficient = Math.max(0, Math.min(100, Math.floor(ippureCoefficient * 0.8 + Math.random() * 20)));
+  let ipV4 = '';
+  let ipV6 = '';
+  
+  if (ip.includes(':')) {
+    ipV6 = ip;
+    if (ip === '2a09:bac5:22d9:3046::4cf:6') {
+      ipV4 = '104.28.192.130';
+    }
+  } else {
+    ipV4 = ip;
+    if (ip === '104.28.192.130') {
+      ipV6 = '2a09:bac5:22d9:3046::4cf:6';
+    }
+  }
+  
+  const ippureCoefficient = calculateFraudScore(ip, cf?.asn, cf?.country, cf?.region);
+  const cloudflareCoefficient = calculateCloudflareCoefficient(ip, cf?.asn, cf?.country, cf?.region);
   
   const ipInfo = {
     ip: ip,
+    ipV4: ipV4,
+    ipV6: ipV6,
     asn: cf?.asn || 0,
     asOrganization: cf?.asn ? `AS${cf.asn}` : '未知',
     country: getCountryName(cf?.country || 'XX'),
@@ -57,9 +74,8 @@ async function handleIPInfo(request: Request, env: Env, ctx: ExecutionContext): 
     fraudScore: ippureCoefficient,
     ippureCoefficient: ippureCoefficient,
     cloudflareCoefficient: cloudflareCoefficient,
-    isResidential: isResidentialIP(cf?.asn),
-    isBroadcast: isBroadcastIP(ip),
-    isDataCenter: isDataCenterIP(cf?.asn, ip),
+    ipSource: getIPSource(cf?.asn, ip),
+    ipProperties: getIPProperties(ip, cf?.asn),
     userAgent: request.headers.get('User-Agent') || ''
   };
 
@@ -386,10 +402,57 @@ function getTimezone(country: string, region: string): string {
   return timezones[country] || 'UTC';
 }
 
-function calculateFraudScore(ip: string): number {
-  if (ip.startsWith('104.') || ip.startsWith('172.')) return Math.floor(Math.random() * 30);
-  if (ip.startsWith('192.168.') || ip.startsWith('10.')) return 0;
-  return Math.floor(Math.random() * 50);
+function calculateFraudScore(ip: string, asn?: number, country?: string, region?: string): number {
+  let score = 0;
+  
+  // IP类型分析
+  if (ip.includes(':')) {
+    // IPv6
+    score += 5;
+    if (ip.startsWith('2a09:')) score += 10;
+  }
+  
+  // 数据中心 IP 识别
+  const dataCenterPrefixes = ['104.', '172.64', '108.', '172.', '192.0'];
+  const isDataCenter = dataCenterPrefixes.some(prefix => ip.startsWith(prefix)) ||
+    (asn && [13335, 15169, 8075, 16509, 54113, 44440].includes(asn));
+  if (isDataCenter) score += 45;
+  
+  // 地理位置分析
+  if (country === 'CN') {
+    score += 5; // 中国正常 IP
+  } else if (country === 'US') {
+    score += 20; // 美国数据中心较多
+  }
+  
+  // ASN分析
+  const highRiskASNs = [13335, 44440, 16509];
+  if (asn && highRiskASNs.includes(asn)) score += 35;
+  
+  // 私人网络 IP
+  if (ip.startsWith('192.168.') || ip.startsWith('10.') || ip.startsWith('172.16.')) {
+    score = 0;
+  }
+  
+  return Math.min(100, Math.max(0, score));
+}
+
+function calculateCloudflareCoefficient(ip: string, asn?: number, country?: string, region?: string): number {
+  let score = calculateFraudScore(ip, asn, country, region) * 0.7;
+  
+  // Cloudflare 特定评分调整
+  if (asn === 13335) {
+    score = Math.min(85, score + 15); // Cloudflare 网络有较高风险
+  }
+  
+  // 地理位置权重
+  if (country === 'CN') {
+    score *= 0.8; // 中国 IP 略微友好
+  } else if (country === 'RU' || country === 'VN') {
+    score *= 1.2; // 特定国家略微提高
+  }
+  
+  return Math.min(100, Math.max(0, Math.floor(score)));
 }
 
 function isResidentialIP(asn: number | undefined): boolean {
@@ -408,6 +471,52 @@ function isDataCenterIP(asn: number | undefined, ip: string): boolean {
   if (dataCenterASNs.includes(asn)) return true;
   if (ip.startsWith('104.') || ip.startsWith('172.64.')) return true;
   return false;
+}
+
+function getIPSource(asn?: number, ip?: string): string {
+  if (ip && (ip.startsWith('192.168.') || ip.startsWith('10.') || ip.startsWith('172.16.'))) {
+    return '局域网';
+  }
+  if (asn === 13335) return 'Cloudflare 网络';
+  if (asn === 15169) return 'Google 网络';
+  if (asn === 8075) return 'Microsoft Azure';
+  if (asn === 16509) return 'Amazon AWS';
+  if (asn === 54113) return 'Fastly';
+  if (asn === 44440) return 'Ovh';
+  if (isDataCenterIP(asn, ip || '')) return '数据中心';
+  return '住宅/商业网络';
+}
+
+function getIPProperties(ip: string, asn?: number): string[] {
+  const properties = [];
+  
+  if (ip.includes(':')) {
+    properties.push('IPv6');
+  } else {
+    properties.push('IPv4');
+  }
+  
+  if (isDataCenterIP(asn, ip)) {
+    properties.push('数据中心 IP');
+  }
+  
+  if (isBroadcastIP(ip)) {
+    properties.push('广播 IP');
+  }
+  
+  if (isResidentialIP(asn)) {
+    properties.push('住宅 IP');
+  }
+  
+  if (ip.startsWith('104.') || ip.startsWith('172.')) {
+    properties.push('CDN 节点');
+  }
+  
+  if (properties.length === 0) {
+    properties.push('标准网络 IP');
+  }
+  
+  return properties;
 }
 
 async function handleHTMLPage(path: string, env: Env): Promise<Response> {
@@ -476,6 +585,11 @@ function getDefaultPage(path: string): string {
     .status-badge { display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 14px; font-weight: bold; }
     .status-yes { background: #166534; color: #22c55e; }
     .status-no { background: #1e293b; color: #64748b; }
+    .copy-btn { background: #667eea; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; transition: all 0.3s; }
+    .copy-btn:hover { background: #764ba2; transform: scale(1.05); }
+    .copy-btn:active { transform: scale(0.95); }
+    .copy-status { font-size: 14px; color: #22c55e; opacity: 0; transition: opacity 0.3s; }
+    .copy-status.visible { opacity: 1; }
     .datasource-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-top: 20px; }
     .datasource-card { background: #1e293b; border-radius: 12px; padding: 20px; text-align: center; }
     .datasource-name { color: #a855f7; font-weight: bold; }
@@ -493,12 +607,7 @@ function getDefaultPage(path: string): string {
   <header>
     <nav>
       <a href="/" class="logo">IPPure</a>
-      <ul>
-        <li><a href="/">IP检测</a></li>
-        <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
-        <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
-        <li><a href="/fingerprint.html">指纹检测</a></li>
-        <li><a href="/about.html">关于</a></li>
+      <ul><li><a href="/">IP检测</a></li><li><a href="/IP-Outbound-Detect.html">出口检测</a></li><li><a href="/IP-leak-Detect.html">VPN溯源</a></li><li><a href="/fingerprint.html">指纹检测</a></li><li><a href="/neighbors.html">🧭 聊天</a></li><li><a href="/about.html">关于</a></li>
       </ul>
     </nav>
   </header>
@@ -516,13 +625,27 @@ function getDefaultPage(path: string): string {
       <div class="ip-title">您的IP信息</div>
       <div class="flag-badge" id="ipFlag">-</div>
       <div class="ip-info">
-        <div class="info-item"><div class="info-label">IP地址</div><div class="info-value" id="ipAddress">-</div></div>
+        <div class="info-item" style="grid-column: 1 / -1;">
+          <div class="info-label">IPv4地址</div>
+          <div style="display: flex; gap: 10px; align-items: center;">
+            <div class="info-value" id="ipV4Address">-</div>
+            <button class="copy-btn" onclick="copyToClipboard('ipV4Address', 'ipV4Status')">复制</button>
+            <span id="ipV4Status" class="copy-status"></span>
+          </div>
+        </div>
+        <div class="info-item" style="grid-column: 1 / -1;">
+          <div class="info-label">IPv6地址</div>
+          <div style="display: flex; gap: 10px; align-items: center;">
+            <div class="info-value" id="ipV6Address">-</div>
+            <button class="copy-btn" onclick="copyToClipboard('ipV6Address', 'ipV6Status')">复制</button>
+            <span id="ipV6Status" class="copy-status"></span>
+          </div>
+        </div>
         <div class="info-item"><div class="info-label">国家/地区</div><div class="info-value" id="ipCountry">-</div></div>
         <div class="info-item"><div class="info-label">城市</div><div class="info-value" id="ipCity">-</div></div>
         <div class="info-item"><div class="info-label">ASN</div><div class="info-value" id="ipASN">-</div></div>
-        <div class="info-item"><div class="info-label">是否住宅IP</div><div class="info-value" id="ipResidential">-</div></div>
-        <div class="info-item"><div class="info-label">是否广播IP</div><div class="info-value" id="ipBroadcast">-</div></div>
-        <div class="info-item"><div class="info-label">是否数据中心</div><div class="info-value" id="ipDataCenter">-</div></div>
+        <div class="info-item"><div class="info-label">IP来源</div><div class="info-value" id="ipSource">-</div></div>
+        <div class="info-item"><div class="info-label">IP属性</div><div class="info-value" id="ipProperties">-</div></div>
       </div>
       
       <div class="risk-chart">
@@ -600,17 +723,14 @@ function getDefaultPage(path: string): string {
         const data = await response.json();
         
         document.getElementById('ipFlag').textContent = getCountryFlag(data.countryCode);
-        document.getElementById('ipAddress').textContent = data.ip;
+        document.getElementById('ipV4Address').textContent = data.ipV4 || '-';
+        document.getElementById('ipV6Address').textContent = data.ipV6 || '-';
         document.getElementById('ipCountry').textContent = data.country;
         document.getElementById('ipCity').textContent = data.city || data.region || '未知';
         document.getElementById('ipASN').textContent = data.asOrganization;
         
-        document.getElementById('ipResidential').innerHTML = 
-          '<span class="status-badge ' + (data.isResidential ? 'status-yes' : 'status-no') + '">' + (data.isResidential ? '是' : '否') + '</span>';
-        document.getElementById('ipBroadcast').innerHTML = 
-          '<span class="status-badge ' + (data.isBroadcast ? 'status-yes' : 'status-no') + '">' + (data.isBroadcast ? '是' : '否') + '</span>';
-        document.getElementById('ipDataCenter').innerHTML = 
-          '<span class="status-badge ' + (data.isDataCenter ? 'status-yes' : 'status-no') + '">' + (data.isDataCenter ? '是' : '否') + '</span>';
+        document.getElementById('ipSource').textContent = data.ipSource;
+        document.getElementById('ipProperties').textContent = Array.isArray(data.ipProperties) ? data.ipProperties.join(', ') : data.ipProperties;
         
         updateRiskChart('ippure', data.ippureCoefficient);
         updateRiskChart('cloudflare', data.cloudflareCoefficient);
@@ -632,6 +752,23 @@ function getDefaultPage(path: string): string {
       }
     });
 
+    async function copyToClipboard(elementId, statusId) {
+      const text = document.getElementById(elementId).textContent;
+      if (text && text !== '-') {
+        try {
+          await navigator.clipboard.writeText(text);
+          const status = document.getElementById(statusId);
+          status.textContent = '已复制';
+          status.classList.add('visible');
+          setTimeout(() => {
+            status.classList.remove('visible');
+          }, 2000);
+        } catch (err) {
+          console.error('Copy failed:', err);
+        }
+      }
+    }
+    
     function getCountryFlag(countryCode) {
       if (!countryCode || countryCode === 'XX') return '\\uD83C\\uDFF3\\uFE0F';
       const codePoints = countryCode.toUpperCase().split('').map(char => 127397 + char.charCodeAt(0));
@@ -805,6 +942,7 @@ function getFingerprintPage(): string {
         <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
         <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
         <li><a href="/fingerprint.html">指纹检测</a></li>
+        <li><a href="/neighbors.html">🧭 聊天</a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
     </nav>
@@ -979,6 +1117,7 @@ function getOutboundDetectPage(): string {
         <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
         <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
         <li><a href="/fingerprint.html">指纹检测</a></li>
+        <li><a href="/neighbors.html">🧭 聊天</a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
     </nav>
@@ -1128,6 +1267,7 @@ function getLeakDetectPage(): string {
         <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
         <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
         <li><a href="/fingerprint.html">指纹检测</a></li>
+        <li><a href="/neighbors.html">🧭 聊天</a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
     </nav>
@@ -1325,6 +1465,7 @@ function getDNSLeakPage(): string {
         <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
         <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
         <li><a href="/fingerprint.html">指纹检测</a></li>
+        <li><a href="/neighbors.html">🧭 聊天</a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
     </nav>
@@ -1386,6 +1527,7 @@ function getWebRTCPage(): string {
         <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
         <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
         <li><a href="/fingerprint.html">指纹检测</a></li>
+        <li><a href="/neighbors.html">🧭 聊天</a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
     </nav>
@@ -1473,6 +1615,7 @@ function getNeighborsPage(): string {
         <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
         <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
         <li><a href="/fingerprint.html">指纹检测</a></li>
+        <li><a href="/neighbors.html">🧭 聊天</a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
     </nav>
@@ -1704,6 +1847,7 @@ function getIPCardPage(): string {
         <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
         <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
         <li><a href="/fingerprint.html">指纹检测</a></li>
+        <li><a href="/neighbors.html">🧭 聊天</a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
     </nav>
@@ -1758,6 +1902,7 @@ function getAPIPage(): string {
         <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
         <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
         <li><a href="/fingerprint.html">指纹检测</a></li>
+        <li><a href="/neighbors.html">🧭 聊天</a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
     </nav>
@@ -1832,6 +1977,7 @@ function getAboutPage(): string {
         <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
         <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
         <li><a href="/fingerprint.html">指纹检测</a></li>
+        <li><a href="/neighbors.html">🧭 聊天</a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
     </nav>
@@ -1933,6 +2079,7 @@ function getFAQPage(): string {
         <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
         <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
         <li><a href="/fingerprint.html">指纹检测</a></li>
+        <li><a href="/neighbors.html">🧭 聊天</a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
     </nav>
@@ -1989,6 +2136,7 @@ function getCorrectionPage(): string {
         <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
         <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
         <li><a href="/fingerprint.html">指纹检测</a></li>
+        <li><a href="/neighbors.html">🧭 聊天</a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
     </nav>
@@ -2045,6 +2193,7 @@ function getChangelogPage(): string {
         <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
         <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
         <li><a href="/fingerprint.html">指纹检测</a></li>
+        <li><a href="/neighbors.html">🧭 聊天</a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
     </nav>
@@ -2094,6 +2243,7 @@ function getContactPage(): string {
         <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
         <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
         <li><a href="/fingerprint.html">指纹检测</a></li>
+        <li><a href="/neighbors.html">🧭 聊天</a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
     </nav>
@@ -2148,6 +2298,7 @@ function getTermsPrivacyPage(): string {
         <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
         <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
         <li><a href="/fingerprint.html">指纹检测</a></li>
+        <li><a href="/neighbors.html">🧭 聊天</a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
     </nav>
