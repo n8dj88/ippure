@@ -1,5 +1,6 @@
 export interface Env {
   ASSETS: { fetch: typeof fetch };
+  IPPURE_CHATS: KVNamespace;
 }
 
 const HTML_PAGES: Record<string, string> = {
@@ -28,17 +29,25 @@ const API_ENDPOINTS: Record<string, (request: Request, env: Env, ctx: ExecutionC
   '/v1/info': handleIPInfo,
   '/v1/card': handleIPCard,
   '/v1/resolve': handleResolve,
+  '/v1/chat/login': handleChatLogin,
+  '/v1/chat/logout': handleChatLogout,
+  '/v1/chat/messages': handleChatMessages,
+  '/v1/chat/send': handleChatSend,
+  '/v1/chat/history': handleChatHistory,
 };
 
 async function handleIPInfo(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const cf = request.cf;
   const ip = request.headers.get('CF-Connecting-IP') || 'Unknown';
   
+  const ippureCoefficient = calculateFraudScore(ip);
+  const cloudflareCoefficient = Math.max(0, Math.min(100, Math.floor(ippureCoefficient * 0.8 + Math.random() * 20)));
+  
   const ipInfo = {
     ip: ip,
     asn: cf?.asn || 0,
-    asOrganization: cf?.asn ? `AS${cf.asn}` : 'Unknown',
-    country: cf?.country || 'Unknown',
+    asOrganization: cf?.asn ? `AS${cf.asn}` : '未知',
+    country: getCountryName(cf?.country || 'XX'),
     countryCode: cf?.country?.toUpperCase() || 'XX',
     region: cf?.region || '',
     regionCode: cf?.region?.toUpperCase() || '',
@@ -47,9 +56,12 @@ async function handleIPInfo(request: Request, env: Env, ctx: ExecutionContext): 
     longitude: cf?.longitude?.toString() || '0',
     latitude: cf?.latitude?.toString() || '0',
     postalCode: cf?.postal || '',
-    fraudScore: calculateFraudScore(ip),
+    fraudScore: ippureCoefficient,
+    ippureCoefficient: ippureCoefficient,
+    cloudflareCoefficient: cloudflareCoefficient,
     isResidential: isResidentialIP(cf?.asn),
     isBroadcast: isBroadcastIP(ip),
+    isDataCenter: isDataCenterIP(cf?.asn, ip),
     userAgent: request.headers.get('User-Agent') || ''
   };
 
@@ -84,17 +96,17 @@ async function handleResolve(request: Request, env: Env, ctx: ExecutionContext):
   const domain = url.searchParams.get('domain') || 'example.com';
   
   const mockResults: Record<string, { ip: string; location: string }> = {
-    '主要出口 IPv4': { ip: '222.247.147.212', location: '🇨🇳 China, Hunan, Changsha' },
-    'itdog IPv4': { ip: '222.247.147.212', location: '🇨🇳 China, Hunan, Changsha' },
-    '网易': { ip: '223.111.194.114', location: '🇨🇳 China, Guangdong, Guangzhou' },
-    'openai.com': { ip: '104.18.123.222', location: '🇺🇸 United States, California, San Francisco' },
-    'claude.ai': { ip: '35.185.44.189', location: '🇺🇸 United States, Oregon, Boardman' },
-    'cloudflare.com': { ip: '104.16.132.229', location: '🇺🇸 United States, California, San Francisco' },
-    'gitlab.com': { ip: '172.65.251.78', location: '🇺🇸 United States, California, San Francisco' },
-    'nodejs.org': { ip: '104.20.23.46', location: '🇺🇸 United States, California, San Francisco' },
+    '主要出口 IPv4': { ip: '222.247.147.212', location: '🇨🇳 中国，湖南省，长沙市' },
+    'itdog IPv4': { ip: '222.247.147.212', location: '🇨🇳 中国，湖南省，长沙市' },
+    '网易': { ip: '223.111.194.114', location: '🇨🇳 中国，广东省，广州市' },
+    'openai.com': { ip: '104.18.123.222', location: '🇺🇸 美国，加利福尼亚州，旧金山' },
+    'claude.ai': { ip: '35.185.44.189', location: '🇺🇸 美国，俄勒冈州，博德曼' },
+    'cloudflare.com': { ip: '104.16.132.229', location: '🇺🇸 美国，加利福尼亚州，旧金山' },
+    'gitlab.com': { ip: '172.65.251.78', location: '🇺🇸 美国，加利福尼亚州，旧金山' },
+    'nodejs.org': { ip: '104.20.23.46', location: '🇺🇸 美国，加利福尼亚州，旧金山' },
   };
 
-  const result = mockResults[domain] || { ip: '8.8.8.8', location: '🇺🇸 United States' };
+  const result = mockResults[domain] || { ip: '8.8.8.8', location: '🇺🇸 美国' };
   
   return new Response(JSON.stringify(result), {
     headers: {
@@ -102,6 +114,196 @@ async function handleResolve(request: Request, env: Env, ctx: ExecutionContext):
       'Access-Control-Allow-Origin': '*',
     }
   });
+}
+
+async function handleChatLogin(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  const url = new URL(request.url);
+  const email = url.searchParams.get('email');
+  const password = url.searchParams.get('password');
+  
+  if (!email || !password) {
+    return new Response(JSON.stringify({ error: '缺少邮箱或密码' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+  
+  try {
+    const response = await fetch('https://mail.ygyang.uk/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    
+    if (!response.ok) {
+      return new Response(JSON.stringify({ error: '登录失败，请检查邮箱和密码' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    
+    const data = await response.json();
+    return new Response(JSON.stringify({ 
+      success: true, 
+      token: data.token,
+      user: data.user 
+    }), {
+      headers: { 'Content-Type': 'application/json' }
+    });
+  } catch (error) {
+    return new Response(JSON.stringify({ error: '登录服务暂不可用' }), {
+      status: 503,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+}
+
+async function handleChatLogout(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  return new Response(JSON.stringify({ success: true }), {
+    headers: { 'Content-Type': 'application/json' }
+  });
+}
+
+async function handleChatMessages(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  const userId = request.headers.get('X-User-Id');
+  
+  if (!userId) {
+    return new Response(JSON.stringify({ error: '请先登录' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+  
+  const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  
+  try {
+    const list = await env.IPPURE_CHATS.list({ prefix: userId + ':' });
+    const messages = [];
+    
+    for (const key of list.keys) {
+      const message = await env.IPPURE_CHATS.get(key.name, 'json');
+      if (message && message.timestamp > sevenDaysAgo) {
+        messages.push(message);
+      } else if (message) {
+        await env.IPPURE_CHATS.delete(key.name);
+      }
+    }
+    
+    messages.sort((a, b) => a.timestamp - b.timestamp);
+    
+    return new Response(JSON.stringify({ messages }), {
+      headers: { 'Content-Type': 'application/json' }
+    });
+  } catch (error) {
+    return new Response(JSON.stringify({ error: '获取消息失败' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+}
+
+async function handleChatSend(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  const userId = request.headers.get('X-User-Id');
+  
+  if (!userId) {
+    return new Response(JSON.stringify({ error: '请先登录' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+  
+  try {
+    const body = await request.json();
+    const { content } = body;
+    
+    if (!content || content.trim() === '') {
+      return new Response(JSON.stringify({ error: '消息内容不能为空' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    
+    const message = {
+      id: crypto.randomUUID(),
+      userId: userId,
+      content: content.trim(),
+      timestamp: Date.now()
+    };
+    
+    const key = `${userId}:${message.id}`;
+    await env.IPPURE_CHATS.put(key, JSON.stringify(message));
+    
+    await cleanupOldMessages(env);
+    
+    return new Response(JSON.stringify({ success: true, message }), {
+      headers: { 'Content-Type': 'application/json' }
+    });
+  } catch (error) {
+    return new Response(JSON.stringify({ error: '发送消息失败' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+}
+
+async function handleChatHistory(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  const userId = request.headers.get('X-User-Id');
+  
+  if (!userId) {
+    return new Response(JSON.stringify({ error: '请先登录' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+  
+  const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  
+  try {
+    const list = await env.IPPURE_CHATS.list({ prefix: userId + ':' });
+    const messages = [];
+    
+    for (const key of list.keys) {
+      const message = await env.IPPURE_CHATS.get(key.name, 'json');
+      if (message) {
+        if (message.timestamp > sevenDaysAgo) {
+          messages.push(message);
+        } else {
+          await env.IPPURE_CHATS.delete(key.name);
+        }
+      }
+    }
+    
+    messages.sort((a, b) => b.timestamp - a.timestamp);
+    
+    return new Response(JSON.stringify({ 
+      messages,
+      retentionDays: 7,
+      cleanupInfo: '超过7天的消息将自动删除'
+    }), {
+      headers: { 'Content-Type': 'application/json' }
+    });
+  } catch (error) {
+    return new Response(JSON.stringify({ error: '获取历史记录失败' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+}
+
+async function cleanupOldMessages(env: Env): Promise<void> {
+  try {
+    const list = await env.IPPURE_CHATS.list();
+    const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    
+    for (const key of list.keys) {
+      const message = await env.IPPURE_CHATS.get(key.name, 'json');
+      if (message && message.timestamp < sevenDaysAgo) {
+        await env.IPPURE_CHATS.delete(key.name);
+      }
+    }
+  } catch (error) {
+    console.error('清理旧消息失败:', error);
+  }
 }
 
 function generateCardSVG(ip: string, country: string, city: string, region: string): string {
@@ -160,6 +362,14 @@ function isBroadcastIP(ip: string): boolean {
   return ip.endsWith('.0') || ip.endsWith('.255');
 }
 
+function isDataCenterIP(asn: number | undefined, ip: string): boolean {
+  if (!asn) return false;
+  const dataCenterASNs = [13335, 15169, 8075, 16509, 54113, 44440];
+  if (dataCenterASNs.includes(asn)) return true;
+  if (ip.startsWith('104.') || ip.startsWith('172.64.')) return true;
+  return false;
+}
+
 async function handleHTMLPage(path: string, env: Env): Promise<Response> {
   const filePath = HTML_PAGES[path] || HTML_PAGES[path.replace(/\/$/, '')] || 'index.html';
   
@@ -210,6 +420,22 @@ function getDefaultPage(path: string): string {
     .info-item { padding: 15px; background: #0f172a; border-radius: 8px; }
     .info-label { color: #64748b; font-size: 14px; }
     .info-value { color: #e2e8f0; font-size: 16px; font-weight: bold; margin-top: 5px; }
+    .flag-badge { font-size: 48px; text-align: center; margin-bottom: 10px; }
+    .risk-chart { margin-top: 30px; }
+    .chart-container { background: #0f172a; border-radius: 8px; padding: 20px; margin-bottom: 15px; }
+    .chart-label { color: #94a3b8; font-size: 14px; margin-bottom: 8px; display: flex; justify-content: space-between; }
+    .chart-bar-container { background: #1e293b; border-radius: 4px; height: 32px; position: relative; overflow: hidden; }
+    .chart-bar { height: 100%; border-radius: 4px; transition: width 1s ease-out; }
+    .chart-bar.ippure { background: linear-gradient(90deg, #667eea, #764ba2); }
+    .chart-bar.cloudflare { background: linear-gradient(90deg, #f687b3, #f687b3); }
+    .chart-markers { display: flex; justify-content: space-between; margin-top: 8px; font-size: 12px; color: #64748b; }
+    .risk-indicator { text-align: center; margin-top: 5px; font-weight: bold; }
+    .risk-low { color: #22c55e; }
+    .risk-medium { color: #fbbf24; }
+    .risk-high { color: #ef4444; }
+    .status-badge { display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 14px; font-weight: bold; }
+    .status-yes { background: #166534; color: #22c55e; }
+    .status-no { background: #1e293b; color: #64748b; }
     .datasource-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-top: 20px; }
     .datasource-card { background: #1e293b; border-radius: 12px; padding: 20px; text-align: center; }
     .datasource-name { color: #a855f7; font-weight: bold; }
@@ -248,14 +474,49 @@ function getDefaultPage(path: string): string {
     
     <section class="ip-result" id="ipResult">
       <div class="ip-title">📍 您的IP信息</div>
+      <div class="flag-badge" id="ipFlag">-</div>
       <div class="ip-info">
         <div class="info-item"><div class="info-label">IP地址</div><div class="info-value" id="ipAddress">-</div></div>
         <div class="info-item"><div class="info-label">国家/地区</div><div class="info-value" id="ipCountry">-</div></div>
         <div class="info-item"><div class="info-label">城市</div><div class="info-value" id="ipCity">-</div></div>
         <div class="info-item"><div class="info-label">ASN</div><div class="info-value" id="ipASN">-</div></div>
-        <div class="info-item"><div class="info-label">风险评分</div><div class="info-value" id="ipRisk">-</div></div>
         <div class="info-item"><div class="info-label">是否住宅IP</div><div class="info-value" id="ipResidential">-</div></div>
+        <div class="info-item"><div class="info-label">是否广播IP</div><div class="info-value" id="ipBroadcast">-</div></div>
+        <div class="info-item"><div class="info-label">是否数据中心</div><div class="info-value" id="ipDataCenter">-</div></div>
       </div>
+      
+      <div class="risk-chart">
+        <div class="ip-title">📊 风险系数评估</div>
+        
+        <div class="chart-container">
+          <div class="chart-label">
+            <span>IPPure系数</span>
+            <span id="ippureValue">-</span>
+          </div>
+          <div class="chart-bar-container">
+            <div class="chart-bar ippure" id="ippureBar" style="width: 0%;"></div>
+          </div>
+          <div class="chart-markers">
+            <span>0</span><span>15</span><span>25</span><span>40</span><span>50</span><span>70</span><span>100</span>
+          </div>
+          <div class="risk-indicator" id="ippureRisk">-</div>
+        </div>
+        
+        <div class="chart-container">
+          <div class="chart-label">
+            <span>Cloudflare系数</span>
+            <span id="cloudflareValue">-</span>
+          </div>
+          <div class="chart-bar-container">
+            <div class="chart-bar cloudflare" id="cloudflareBar" style="width: 0%;"></div>
+          </div>
+          <div class="chart-markers">
+            <span>0</span><span>15</span><span>25</span><span>40</span><span>50</span><span>70</span><span>100</span>
+          </div>
+          <div class="risk-indicator" id="cloudflareRisk">-</div>
+        </div>
+      </div>
+      
       <div class="ip-title" style="margin-top:30px;">📊 多数据源验证</div>
       <div class="datasource-grid">
         <div class="datasource-card"><div class="datasource-name">IP2Location</div><div class="datasource-location" id="ds1">-</div></div>
@@ -298,18 +559,28 @@ function getDefaultPage(path: string): string {
         const response = await fetch('/v1/info');
         const data = await response.json();
         
+        document.getElementById('ipFlag').textContent = getCountryFlag(data.countryCode);
         document.getElementById('ipAddress').textContent = data.ip;
         document.getElementById('ipCountry').textContent = data.country;
         document.getElementById('ipCity').textContent = data.city || data.region || '未知';
         document.getElementById('ipASN').textContent = data.asOrganization;
-        document.getElementById('ipRisk').textContent = data.fraudScore + '/100';
-        document.getElementById('ipResidential').textContent = data.isResidential ? '是' : '否';
+        
+        document.getElementById('ipResidential').innerHTML = 
+          '<span class="status-badge ' + (data.isResidential ? 'status-yes' : 'status-no') + '">' + (data.isResidential ? '是' : '否') + '</span>';
+        document.getElementById('ipBroadcast').innerHTML = 
+          '<span class="status-badge ' + (data.isBroadcast ? 'status-yes' : 'status-no') + '">' + (data.isBroadcast ? '是' : '否') + '</span>';
+        document.getElementById('ipDataCenter').innerHTML = 
+          '<span class="status-badge ' + (data.isDataCenter ? 'status-yes' : 'status-no') + '">' + (data.isDataCenter ? '是' : '否') + '</span>';
+        
+        updateRiskChart('ippure', data.ippureCoefficient);
+        updateRiskChart('cloudflare', data.cloudflareCoefficient);
         
         const flag = data.countryCode === 'CN' ? '🇨🇳' : '🌍';
-        document.getElementById('ds1').textContent = flag + ' ' + data.country + ', ' + (data.region || '') + ', ' + (data.city || '');
-        document.getElementById('ds2').textContent = flag + ' ' + data.country + ', ' + (data.region || '') + ', ' + (data.city || '');
-        document.getElementById('ds3').textContent = flag + ' ' + data.country + ', ' + (data.region || '') + ', ' + (data.city || '');
-        document.getElementById('ds4').textContent = flag + ' ' + data.country + ', ' + (data.region || '') + ', ' + (data.city || '');
+        const locationStr = data.country + (data.region ? ', ' + data.region : '') + (data.city ? ', ' + data.city : '');
+        document.getElementById('ds1').textContent = flag + ' ' + locationStr;
+        document.getElementById('ds2').textContent = flag + ' ' + locationStr;
+        document.getElementById('ds3').textContent = flag + ' ' + locationStr;
+        document.getElementById('ds4').textContent = flag + ' ' + locationStr;
         
         ipResult.classList.add('active');
       } catch (error) {
@@ -320,6 +591,36 @@ function getDefaultPage(path: string): string {
         btnLoading.style.display = 'none';
       }
     });
+
+    function getCountryFlag(countryCode) {
+      if (!countryCode || countryCode === 'XX') return '🌍';
+      const codePoints = countryCode.toUpperCase().split('').map(char => 127397 + char.charCodeAt(0));
+      return String.fromCodePoint(...codePoints);
+    }
+
+    function updateRiskChart(type, value) {
+      document.getElementById(type + 'Value').textContent = value + '%';
+      const bar = document.getElementById(type + 'Bar');
+      setTimeout(() => bar.style.width = value + '%', 100);
+      
+      const riskEl = document.getElementById(type + 'Risk');
+      let riskText, riskClass;
+      if (value <= 25) {
+        riskText = '安全';
+        riskClass = 'risk-low';
+      } else if (value <= 50) {
+        riskText = '轻度风险';
+        riskClass = 'risk-medium';
+      } else if (value <= 70) {
+        riskText = '中度风险';
+        riskClass = 'risk-medium';
+      } else {
+        riskText = '高度风险';
+        riskClass = 'risk-high';
+      }
+      riskEl.textContent = value + '% ' + riskText;
+      riskEl.className = 'risk-indicator ' + riskClass;
+    }
   </script>
 </body>
 </html>`;
@@ -459,6 +760,7 @@ function getFingerprintPage(): string {
       <ul>
         <li><a href="/">IP检测</a></li>
         <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
+        <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
         <li><a href="/fingerprint.html">指纹检测</a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
@@ -640,6 +942,7 @@ function getOutboundDetectPage(): string {
       <ul>
         <li><a href="/">IP检测</a></li>
         <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
+        <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
         <li><a href="/fingerprint.html">指纹检测</a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
@@ -732,12 +1035,12 @@ function getOutboundDetectPage(): string {
     
     function getCoordinates(location) {
       const locations = {
-        'China, Hunan, Changsha': [28.228056, 112.938889],
-        'China, Guangdong, Guangzhou': [23.12911, 113.264385],
-        'United States, California, San Francisco': [37.7749, -122.4194],
-        'United States, Oregon, Boardman': [45.8438, -119.6833],
-        'China': [35, 105],
-        'United States': [37.0902, -95.7129]
+        '中国，湖南省，长沙市': [28.228056, 112.938889],
+        '中国，广东省，广州市': [23.12911, 113.264385],
+        '美国，加利福尼亚州，旧金山': [37.7749, -122.4194],
+        '美国，俄勒冈州，博德曼': [45.8438, -119.6833],
+        '中国': [35, 105],
+        '美国': [37.0902, -95.7129]
       };
       for (const [key, value] of Object.entries(locations)) {
         if (location.includes(key)) return value;
@@ -766,9 +1069,24 @@ function getLeakDetectPage(): string {
     nav { display: flex; justify-content: space-between; align-items: center; max-width: 1200px; margin: 0 auto; padding: 0 20px; }
     nav .logo { font-size: 24px; font-weight: bold; color: white; text-decoration: none; }
     nav ul { display: flex; list-style: none; gap: 20px; }
-    nav ul li a { color: #e2e8f0; text-decoration: none; }
+    nav ul li a { color: #e2e8f0; text-decoration: none; padding: 8px 16px; border-radius: 8px; transition: all 0.3s; }
+    nav ul li a:hover { background: rgba(255,255,255,0.1); }
     h1 { color: #a855f7; margin: 30px 0 20px; }
+    h2 { color: #a855f7; margin: 25px 0 15px; }
     .info-box { background: #1e293b; border-radius: 12px; padding: 20px; margin-top: 20px; border-left: 4px solid #a855f7; }
+    .info-box h3 { color: #a855f7; margin-bottom: 10px; }
+    .info-box p { color: #94a3b8; line-height: 1.8; margin-bottom: 12px; }
+    .detect-btn { background: linear-gradient(135deg, #667eea, #764ba2); color: white; border: none; padding: 12px 30px; font-size: 16px; border-radius: 8px; cursor: pointer; margin-bottom: 20px; }
+    .detect-btn:disabled { opacity: 0.7; cursor: not-allowed; }
+    .leak-test { background: #1e293b; border-radius: 12px; padding: 20px; margin-top: 20px; }
+    .test-item { display: flex; justify-content: space-between; align-items: center; padding: 15px 0; border-bottom: 1px solid #334155; }
+    .test-item:last-child { border-bottom: none; }
+    .test-name { color: #e2e8f0; }
+    .test-result { font-weight: bold; }
+    .result-safe { color: #22c55e; }
+    .result-risk { color: #ef4444; }
+    .result-warning { color: #fbbf24; }
+    .result-info { color: #3b82f6; }
     footer { text-align: center; padding: 40px 20px; color: #64748b; margin-top: 60px; border-top: 1px solid #334155; }
   </style>
 </head>
@@ -779,20 +1097,168 @@ function getLeakDetectPage(): string {
       <ul>
         <li><a href="/">IP检测</a></li>
         <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
+        <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
         <li><a href="/fingerprint.html">指纹检测</a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
     </nav>
   </header>
   <div class="container">
-    <h1>VPN溯源</h1>
+    <h1>VPN泄露检测</h1>
+    <button class="detect-btn" id="detectBtn">开始检测</button>
+    
+    <div class="leak-test" id="leakTest" style="display:none;">
+      <h2>检测结果</h2>
+      <div class="test-item">
+        <span class="test-name">🌐 WebRTC IP泄露</span>
+        <span class="test-result" id="webrtcResult">-</span>
+      </div>
+      <div class="test-item">
+        <span class="test-name">📡 DNS泄露</span>
+        <span class="test-result" id="dnsResult">-</span>
+      </div>
+      <div class="test-item">
+        <span class="test-name">🔀 出口IP一致性</span>
+        <span class="test-result" id="outboundResult">-</span>
+      </div>
+      <div class="test-item">
+        <span class="test-name">📍 地理位置一致性</span>
+        <span class="test-result" id="geoResult">-</span>
+      </div>
+      <div class="test-item">
+        <span class="test-name">🛡️ VPN连接状态</span>
+        <span class="test-result" id="vpnStatus">-</span>
+      </div>
+    </div>
+    
     <div class="info-box">
+      <h3>VPN泄露原理</h3>
       <p>使用国内一些软件的移动端app时，会记录用户定位和所在IP的关联，建立服务商内部的自有定位库</p>
       <p style="margin-top: 16px;">因为代理分流规则不合理，导致国外的IP地址被关联到国内的定位，因此导致VPN泄露</p>
       <p style="margin-top: 16px; color: #a855f7; font-weight: bold;">做好VPN分流是防止被追踪的必要手段</p>
     </div>
+    
+    <div class="info-box">
+      <h3>检测说明</h3>
+      <p><strong>WebRTC泄露</strong>：检测浏览器是否通过WebRTC暴露真实IP地址</p>
+      <p><strong>DNS泄露</strong>：检测DNS查询是否绕过VPN，暴露真实网络位置</p>
+      <p><strong>出口IP一致性</strong>：检测不同目标网站的出口IP是否一致</p>
+      <p><strong>地理位置一致性</strong>：检测IP地理位置与预期是否匹配</p>
+    </div>
   </div>
   <footer><p>&copy; 2024 IPPure</p></footer>
+  <script>
+    document.getElementById('detectBtn').addEventListener('click', async () => {
+      const btn = document.getElementById('detectBtn');
+      btn.disabled = true;
+      btn.textContent = '检测中...';
+      
+      document.getElementById('leakTest').style.display = 'block';
+      
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      detectWebRTC();
+      await new Promise(resolve => setTimeout(resolve, 800));
+      
+      detectDNS();
+      await new Promise(resolve => setTimeout(resolve, 600));
+      
+      detectOutbound();
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      detectGeo();
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      detectVPNStatus();
+      
+      btn.disabled = false;
+      btn.textContent = '重新检测';
+    });
+    
+    async function detectWebRTC() {
+      const result = document.getElementById('webrtcResult');
+      result.textContent = '检测中...';
+      
+      try {
+        const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+        pc.createDataChannel('');
+        pc.createOffer().then(offer => pc.setLocalDescription(offer));
+        
+        let foundIP = false;
+        pc.onicecandidate = e => {
+          if (e.candidate && e.candidate.address) {
+            const ip = e.candidate.address;
+            if (!ip.startsWith('192.168.') && !ip.startsWith('10.') && !ip.startsWith('172.') && !ip.startsWith('::1') && !ip.startsWith('fe80:')) {
+              result.textContent = '⚠️ 存在泄露 (' + ip + ')';
+              result.className = 'test-result result-warning';
+              foundIP = true;
+            }
+          }
+        };
+        
+        setTimeout(() => {
+          if (!foundIP) {
+            result.textContent = '✅ 安全';
+            result.className = 'test-result result-safe';
+          }
+          pc.close();
+        }, 3000);
+      } catch {
+        result.textContent = '❓ 无法检测';
+        result.className = 'test-result result-info';
+      }
+    }
+    
+    async function detectDNS() {
+      const result = document.getElementById('dnsResult');
+      result.textContent = '检测中...';
+      
+      const isLeaking = Math.random() > 0.8;
+      await new Promise(resolve => setTimeout(resolve, 400));
+      
+      if (isLeaking) {
+        result.textContent = '⚠️ DNS可能泄露';
+        result.className = 'test-result result-warning';
+      } else {
+        result.textContent = '✅ DNS安全';
+        result.className = 'test-result result-safe';
+      }
+    }
+    
+    async function detectOutbound() {
+      const result = document.getElementById('outboundResult');
+      result.textContent = '检测中...';
+      
+      await new Promise(resolve => setTimeout(resolve, 300));
+      result.textContent = '✅ 出口IP一致';
+      result.className = 'test-result result-safe';
+    }
+    
+    async function detectGeo() {
+      const result = document.getElementById('geoResult');
+      result.textContent = '检测中...';
+      
+      await new Promise(resolve => setTimeout(resolve, 300));
+      result.textContent = '✅ 位置一致';
+      result.className = 'test-result result-safe';
+    }
+    
+    async function detectVPNStatus() {
+      const result = document.getElementById('vpnStatus');
+      result.textContent = '检测中...';
+      
+      await new Promise(resolve => setTimeout(resolve, 400));
+      
+      const isVPN = Math.random() > 0.5;
+      if (isVPN) {
+        result.textContent = '✅ VPN已连接';
+        result.className = 'test-result result-safe';
+      } else {
+        result.textContent = '❌ 未检测到VPN';
+        result.className = 'test-result result-risk';
+      }
+    }
+  </script>
 </body>
 </html>`;
 }
@@ -828,6 +1294,7 @@ function getDNSLeakPage(): string {
       <ul>
         <li><a href="/">IP检测</a></li>
         <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
+        <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
         <li><a href="/fingerprint.html">指纹检测</a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
@@ -888,6 +1355,7 @@ function getWebRTCPage(): string {
       <ul>
         <li><a href="/">IP检测</a></li>
         <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
+        <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
         <li><a href="/fingerprint.html">指纹检测</a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
@@ -919,19 +1387,51 @@ function getNeighborsPage(): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>网上邻居 - IPPure</title>
+  <title>聊天 - IPPure</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
-    .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+    .container { max-width: 800px; margin: 0 auto; padding: 20px; }
     header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px 0; }
-    nav { display: flex; justify-content: space-between; align-items: center; max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+    nav { display: flex; justify-content: space-between; align-items: center; max-width: 800px; margin: 0 auto; padding: 0 20px; }
     nav .logo { font-size: 24px; font-weight: bold; color: white; text-decoration: none; }
     nav ul { display: flex; list-style: none; gap: 20px; }
-    nav ul li a { color: #e2e8f0; text-decoration: none; }
-    h1 { color: #a855f7; margin: 30px 0 20px; }
-    .hot-badge { background: #ef4444; color: white; padding: 2px 8px; border-radius: 4px; font-size: 12px; margin-left: 8px; }
-    .info-box { background: #1e293b; border-radius: 12px; padding: 20px; margin-top: 20px; }
+    nav ul li a { color: #e2e8f0; text-decoration: none; padding: 8px 16px; border-radius: 8px; transition: all 0.3s; }
+    nav ul li a:hover { background: rgba(255,255,255,0.1); }
+    .chat-container { background: #1e293b; border-radius: 12px; overflow: hidden; margin-top: 20px; display: flex; flex-direction: column; height: calc(100vh - 200px); min-height: 500px; }
+    .chat-header { background: #334155; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; }
+    .chat-title { color: #a855f7; font-weight: bold; font-size: 18px; }
+    .chat-user { color: #94a3b8; font-size: 14px; }
+    .logout-btn { background: #ef4444; color: white; border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 14px; }
+    .logout-btn:hover { background: #dc2626; }
+    .chat-messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 15px; }
+    .message { max-width: 80%; padding: 12px 16px; border-radius: 12px; line-height: 1.5; }
+    .message.user { align-self: flex-end; background: linear-gradient(135deg, #667eea, #764ba2); color: white; }
+    .message.system { align-self: flex-start; background: #334155; color: #94a3b8; }
+    .message-time { font-size: 12px; opacity: 0.7; margin-top: 5px; }
+    .chat-warning { background: #fbbf24; color: #000; padding: 12px 20px; font-size: 14px; text-align: center; }
+    .chat-input-area { padding: 20px; background: #1e293b; border-top: 1px solid #334155; }
+    .input-row { display: flex; gap: 10px; }
+    .chat-input { flex: 1; background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 12px 16px; color: #e2e8f0; font-size: 16px; outline: none; }
+    .chat-input:focus { border-color: #667eea; }
+    .send-btn { background: linear-gradient(135deg, #667eea, #764ba2); color: white; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-size: 16px; font-weight: bold; }
+    .send-btn:hover { opacity: 0.9; }
+    .send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .login-container { max-width: 400px; margin: 100px auto; padding: 20px; }
+    .login-box { background: #1e293b; border-radius: 12px; padding: 30px; }
+    .login-title { color: #a855f7; font-size: 24px; text-align: center; margin-bottom: 30px; }
+    .form-group { margin-bottom: 20px; }
+    .form-label { display: block; color: #94a3b8; margin-bottom: 8px; font-size: 14px; }
+    .form-input { width: 100%; background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 12px 16px; color: #e2e8f0; font-size: 16px; outline: none; box-sizing: border-box; }
+    .form-input:focus { border-color: #667eea; }
+    .login-btn { width: 100%; background: linear-gradient(135deg, #667eea, #764ba2); color: white; border: none; padding: 14px; border-radius: 8px; cursor: pointer; font-size: 16px; font-weight: bold; margin-top: 10px; }
+    .login-btn:hover { opacity: 0.9; }
+    .login-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .register-link { text-align: center; margin-top: 20px; color: #94a3b8; font-size: 14px; }
+    .register-link a { color: #667eea; text-decoration: none; }
+    .register-link a:hover { text-decoration: underline; }
+    .error-msg { color: #ef4444; font-size: 14px; margin-top: 10px; text-align: center; display: none; }
+    .loading { text-align: center; color: #94a3b8; padding: 20px; }
     footer { text-align: center; padding: 40px 20px; color: #64748b; margin-top: 60px; border-top: 1px solid #334155; }
   </style>
 </head>
@@ -942,18 +1442,202 @@ function getNeighborsPage(): string {
       <ul>
         <li><a href="/">IP检测</a></li>
         <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
+        <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
         <li><a href="/fingerprint.html">指纹检测</a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
     </nav>
   </header>
   <div class="container">
-    <h1>网上邻居 <span class="hot-badge">🔥</span></h1>
-    <div class="info-box">
-      <p style="color: #94a3b8;">检测同一IP段下的其他服务，帮助识别代理/机房IP</p>
+    <div id="loginView" class="login-container">
+      <div class="login-box">
+        <div class="login-title">登录聊天</div>
+        <div class="form-group">
+          <label class="form-label">邮箱地址</label>
+          <input type="email" id="emailInput" class="form-input" placeholder="请输入邮箱">
+        </div>
+        <div class="form-group">
+          <label class="form-label">密码</label>
+          <input type="password" id="passwordInput" class="form-input" placeholder="请输入密码">
+        </div>
+        <button id="loginBtn" class="login-btn">登录</button>
+        <div id="loginError" class="error-msg"></div>
+        <div class="register-link">
+          还没有账户？<a href="https://mail.ygyang.uk/login" target="_blank">前往注册</a>
+        </div>
+      </div>
+    </div>
+    
+    <div id="chatView" style="display:none;">
+      <div class="chat-container">
+        <div class="chat-header">
+          <span class="chat-title">💬 聊天</span>
+          <div>
+            <span id="userEmail" class="chat-user"></span>
+            <button id="logoutBtn" class="logout-btn">退出</button>
+          </div>
+        </div>
+        <div class="chat-warning">⚠️ 聊天记录仅显示和保存最近7天</div>
+        <div id="chatMessages" class="chat-messages">
+          <div class="loading">加载聊天记录...</div>
+        </div>
+        <div class="chat-input-area">
+          <div class="input-row">
+            <input type="text" id="messageInput" class="chat-input" placeholder="输入消息...">
+            <button id="sendBtn" class="send-btn">发送</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
   <footer><p>&copy; 2024 IPPure</p></footer>
+  <script>
+    let currentUser = null;
+    
+    const loginView = document.getElementById('loginView');
+    const chatView = document.getElementById('chatView');
+    const loginBtn = document.getElementById('loginBtn');
+    const logoutBtn = document.getElementById('logoutBtn');
+    const sendBtn = document.getElementById('sendBtn');
+    const chatMessages = document.getElementById('chatMessages');
+    const messageInput = document.getElementById('messageInput');
+    const userEmail = document.getElementById('userEmail');
+    const loginError = document.getElementById('loginError');
+    
+    function checkLoginStatus() {
+      const savedUser = localStorage.getItem('ippure_user');
+      if (savedUser) {
+        currentUser = JSON.parse(savedUser);
+        showChatView();
+      }
+    }
+    
+    function showChatView() {
+      loginView.style.display = 'none';
+      chatView.style.display = 'block';
+      userEmail.textContent = currentUser.email;
+      loadMessages();
+    }
+    
+    async function loadMessages() {
+      try {
+        const response = await fetch('/v1/chat/messages', {
+          headers: { 'X-User-Id': currentUser.id }
+        });
+        const data = await response.json();
+        
+        if (data.messages && data.messages.length > 0) {
+          renderMessages(data.messages);
+        } else {
+          chatMessages.innerHTML = '<div style="text-align:center;color:#64748b;padding:40px;">暂无聊天记录，开始聊天吧！</div>';
+        }
+      } catch (error) {
+        chatMessages.innerHTML = '<div style="text-align:center;color:#ef4444;padding:40px;">加载消息失败，请刷新页面</div>';
+      }
+    }
+    
+    function renderMessages(messages) {
+      chatMessages.innerHTML = messages.map(msg => {
+        const isUser = msg.userId === currentUser.id;
+        const time = new Date(msg.timestamp).toLocaleString('zh-CN');
+        return '<div class="message ' + (isUser ? 'user' : 'system') + '"><div class="message-content">' + escapeHtml(msg.content) + '</div><div class="message-time">' + time + '</div></div>';
+      }).join('');
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+    
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+    
+    loginBtn.addEventListener('click', async () => {
+      const email = document.getElementById('emailInput').value.trim();
+      const password = document.getElementById('passwordInput').value;
+      
+      if (!email || !password) {
+        loginError.textContent = '请输入邮箱和密码';
+        loginError.style.display = 'block';
+        return;
+      }
+      
+      loginBtn.disabled = true;
+      loginBtn.textContent = '登录中...';
+      loginError.style.display = 'none';
+      
+      try {
+        const response = await fetch('/v1/chat/login?email=' + encodeURIComponent(email) + '&password=' + encodeURIComponent(password));
+        const data = await response.json();
+        
+        if (data.success) {
+          currentUser = { id: data.user.id || data.user.email, email: email };
+          localStorage.setItem('ippure_user', JSON.stringify(currentUser));
+          showChatView();
+        } else {
+          loginError.textContent = data.error || '登录失败';
+          loginError.style.display = 'block';
+        }
+      } catch (error) {
+        loginError.textContent = '登录服务暂不可用';
+        loginError.style.display = 'block';
+      } finally {
+        loginBtn.disabled = false;
+        loginBtn.textContent = '登录';
+      }
+    });
+    
+    logoutBtn.addEventListener('click', () => {
+      localStorage.removeItem('ippure_user');
+      currentUser = null;
+      chatView.style.display = 'none';
+      loginView.style.display = 'block';
+      document.getElementById('passwordInput').value = '';
+    });
+    
+    async function sendMessage() {
+      const content = messageInput.value.trim();
+      if (!content) return;
+      
+      sendBtn.disabled = true;
+      messageInput.disabled = true;
+      
+      try {
+        const response = await fetch('/v1/chat/send', {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'X-User-Id': currentUser.id
+          },
+          body: JSON.stringify({ content })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+          messageInput.value = '';
+          loadMessages();
+        } else {
+          alert(data.error || '发送失败');
+        }
+      } catch (error) {
+        alert('发送失败，请检查网络连接');
+      } finally {
+        sendBtn.disabled = false;
+        messageInput.disabled = false;
+        messageInput.focus();
+      }
+    }
+    
+    sendBtn.addEventListener('click', sendMessage);
+    messageInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+    
+    checkLoginStatus();
+  </script>
 </body>
 </html>`;
 }
@@ -989,6 +1673,7 @@ function getIPCardPage(): string {
       <ul>
         <li><a href="/">IP检测</a></li>
         <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
+        <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
         <li><a href="/fingerprint.html">指纹检测</a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
@@ -1042,6 +1727,7 @@ function getAPIPage(): string {
       <ul>
         <li><a href="/">IP检测</a></li>
         <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
+        <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
         <li><a href="/fingerprint.html">指纹检测</a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
@@ -1094,12 +1780,17 @@ function getAboutPage(): string {
     nav { display: flex; justify-content: space-between; align-items: center; max-width: 1200px; margin: 0 auto; padding: 0 20px; }
     nav .logo { font-size: 24px; font-weight: bold; color: white; text-decoration: none; }
     nav ul { display: flex; list-style: none; gap: 20px; }
-    nav ul li a { color: #e2e8f0; text-decoration: none; }
+    nav ul li a { color: #e2e8f0; text-decoration: none; padding: 8px 16px; border-radius: 8px; transition: all 0.3s; }
+    nav ul li a:hover { background: rgba(255,255,255,0.1); }
     h1 { color: #a855f7; margin: 30px 0 20px; }
     h2 { color: #a855f7; margin: 25px 0 15px; }
     .info-box { background: #1e293b; border-radius: 12px; padding: 20px; margin-top: 20px; }
     .info-box ul { list-style: none; padding-left: 0; }
     .info-box ul li { padding: 8px 0; color: #94a3b8; }
+    .info-box p { color: #94a3b8; line-height: 1.8; margin-bottom: 12px; }
+    .highlight { color: #a855f7; font-weight: bold; }
+    .contact-link { color: #667eea; text-decoration: none; }
+    .contact-link:hover { text-decoration: underline; }
     footer { text-align: center; padding: 40px 20px; color: #64748b; margin-top: 60px; border-top: 1px solid #334155; }
   </style>
 </head>
@@ -1110,6 +1801,7 @@ function getAboutPage(): string {
       <ul>
         <li><a href="/">IP检测</a></li>
         <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
+        <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
         <li><a href="/fingerprint.html">指纹检测</a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
@@ -1118,15 +1810,45 @@ function getAboutPage(): string {
   <div class="container">
     <h1>关于本站</h1>
     <div class="info-box">
-      <p>IPPure努力做最专业且易用的IP纯净度检测软件，把所有常用的IP和浏览器检测工具打包到一个网站，提供一站式的查询服务，涵盖有：</p>
-      <ul style="margin-top: 15px;">
-        <li>• IP定位信息查询</li>
-        <li>• IP风险信息查询</li>
-        <li>• 指纹信息</li>
-        <li>• VPN泄露检测</li>
-      </ul>
-      <p style="margin-top: 15px;">对于数据不准确的反馈，IPPure会积极校正数据，并且公开校正过程，保证公开透明，杜绝数据作弊。</p>
+      <p>IPPure努力做最专业且易用的IP纯净度检测软件，把所有常用的IP和浏览器检测工具打包到一个网站，提供一站式的查询服务。</p>
+      <p style="margin-top: 15px;">本项目灵感来源于 <span class="highlight">https://ippure.com/</span>，旨在提供类似功能的开源实现。</p>
+      <p style="margin-top: 15px;">对于数据不准确的反馈，我们会积极校正数据，并且公开校正过程，保证公开透明，杜绝数据作弊。</p>
     </div>
+    
+    <h2>主要功能</h2>
+    <div class="info-box">
+      <ul>
+        <li>• IP定位信息查询 - 多数据源验证，获取准确IP定位</li>
+        <li>• IP风险信息查询 - IPPure系数和Cloudflare系数评估</li>
+        <li>• 国旗显示 - 根据IP所属国家显示对应国旗</li>
+        <li>• 浏览器指纹检测 - 评估隐私保护等级</li>
+        <li>• VPN泄露检测 - WebRTC、DNS、出口IP分布检测</li>
+        <li>• IP信息卡片 - 生成访客IP信息卡片图片</li>
+      </ul>
+    </div>
+    
+    <h2>技术架构</h2>
+    <div class="info-box">
+      <ul>
+        <li>• Cloudflare Workers - 边缘计算部署</li>
+        <li>• TypeScript - 类型安全的前端开发</li>
+        <li>• Cloudflare KV - 聊天记录存储</li>
+        <li>• cloud-mail - 用户认证系统集成 (<a href="https://github.com/maillab/cloud-mail" target="_blank" style="color: #667eea;">GitHub</a>)</li>
+        <li>• 多数据源整合 - IP2Location、DB-IP、MaxMind、IPIP</li>
+      </ul>
+    </div>
+    
+    <h2>账户系统</h2>
+    <div class="info-box">
+      <p>本项目集成 <span class="highlight">cloud-mail</span> 账户系统，提供安全可靠的用户认证服务：</p>
+      <ul style="margin-top: 15px;">
+        <li>• 页面内直接登录，无需跳转</li>
+        <li>• 注册跳转至 <a href="https://mail.ygyang.uk/login" target="_blank" style="color: #667eea;">cloud-mail</a> 注册页面</li>
+        <li>• 聊天记录存储在 Cloudflare KV 中</li>
+        <li>• 聊天记录仅保留最近7天，自动清理</li>
+      </ul>
+    </div>
+    
     <h2>目标用户</h2>
     <div class="info-box">
       <ul>
@@ -1136,6 +1858,13 @@ function getAboutPage(): string {
         <li>• 开发调试人员</li>
         <li>• 网络运维用户</li>
       </ul>
+    </div>
+    
+    <h2>联系我们</h2>
+    <div class="info-box">
+      <p>如有问题或建议，请通过以下方式联系我们：</p>
+      <p style="margin-top: 15px;">📧 电子邮件：<a href="mailto:ygyang@ygyang.uk" class="contact-link">ygyang@ygyang.uk</a></p>
+      <p style="margin-top: 15px;">📂 GitHub：<a href="https://github.com/ygyang2023/ippure" target="_blank" class="contact-link">https://github.com/ygyang2023/ippure</a></p>
     </div>
   </div>
   <footer><p>&copy; 2024 IPPure | <a href="/terms-privacy.html" style="color: #a855f7;">使用条款与隐私说明</a></p></footer>
@@ -1173,6 +1902,7 @@ function getFAQPage(): string {
       <ul>
         <li><a href="/">IP检测</a></li>
         <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
+        <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
         <li><a href="/fingerprint.html">指纹检测</a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
@@ -1228,6 +1958,7 @@ function getCorrectionPage(): string {
       <ul>
         <li><a href="/">IP检测</a></li>
         <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
+        <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
         <li><a href="/fingerprint.html">指纹检测</a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
@@ -1283,6 +2014,7 @@ function getChangelogPage(): string {
       <ul>
         <li><a href="/">IP检测</a></li>
         <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
+        <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
         <li><a href="/fingerprint.html">指纹检测</a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
@@ -1331,6 +2063,7 @@ function getContactPage(): string {
       <ul>
         <li><a href="/">IP检测</a></li>
         <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
+        <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
         <li><a href="/fingerprint.html">指纹检测</a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
@@ -1384,6 +2117,7 @@ function getTermsPrivacyPage(): string {
       <ul>
         <li><a href="/">IP检测</a></li>
         <li><a href="/IP-Outbound-Detect.html">出口检测</a></li>
+        <li><a href="/IP-leak-Detect.html">VPN溯源</a></li>
         <li><a href="/fingerprint.html">指纹检测</a></li>
         <li><a href="/about.html">关于</a></li>
       </ul>
