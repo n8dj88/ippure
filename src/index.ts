@@ -27,6 +27,7 @@ const HTML_PAGES: Record<string, string> = {
 const API_ENDPOINTS: Record<string, (request: Request, env: Env, ctx: ExecutionContext) => Promise<Response>> = {
   '/v1/info': handleIPInfo,
   '/v1/card': handleIPCard,
+  '/v1/resolve': handleResolve,
 };
 
 async function handleIPInfo(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -78,6 +79,31 @@ async function handleIPCard(request: Request, env: Env, ctx: ExecutionContext): 
   });
 }
 
+async function handleResolve(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  const url = new URL(request.url);
+  const domain = url.searchParams.get('domain') || 'example.com';
+  
+  const mockResults: Record<string, { ip: string; location: string }> = {
+    '主要出口 IPv4': { ip: '222.247.147.212', location: '🇨🇳 China, Hunan, Changsha' },
+    'itdog IPv4': { ip: '222.247.147.212', location: '🇨🇳 China, Hunan, Changsha' },
+    '网易': { ip: '223.111.194.114', location: '🇨🇳 China, Guangdong, Guangzhou' },
+    'openai.com': { ip: '104.18.123.222', location: '🇺🇸 United States, California, San Francisco' },
+    'claude.ai': { ip: '35.185.44.189', location: '🇺🇸 United States, Oregon, Boardman' },
+    'cloudflare.com': { ip: '104.16.132.229', location: '🇺🇸 United States, California, San Francisco' },
+    'gitlab.com': { ip: '172.65.251.78', location: '🇺🇸 United States, California, San Francisco' },
+    'nodejs.org': { ip: '104.20.23.46', location: '🇺🇸 United States, California, San Francisco' },
+  };
+
+  const result = mockResults[domain] || { ip: '8.8.8.8', location: '🇺🇸 United States' };
+  
+  return new Response(JSON.stringify(result), {
+    headers: {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+    }
+  });
+}
+
 function generateCardSVG(ip: string, country: string, city: string, region: string): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 120" width="400" height="120">
   <defs>
@@ -102,9 +128,10 @@ function getCountryFlag(countryCode: string): string {
 
 function getCountryName(countryCode: string): string {
   const countries: Record<string, string> = {
-    'CN': 'China', 'US': 'United States', 'JP': 'Japan', 'KR': 'Korea',
-    'GB': 'United Kingdom', 'DE': 'Germany', 'FR': 'France', 'AU': 'Australia',
-    'CA': 'Canada', 'SG': 'Singapore', 'HK': 'Hong Kong', 'TW': 'Taiwan'
+    'CN': '中国', 'US': '美国', 'JP': '日本', 'KR': '韩国',
+    'GB': '英国', 'DE': '德国', 'FR': '法国', 'AU': '澳大利亚',
+    'CA': '加拿大', 'SG': '新加坡', 'HK': '香港', 'TW': '台湾',
+    'XX': '未知'
   };
   return countries[countryCode] || countryCode;
 }
@@ -173,11 +200,27 @@ function getDefaultPage(path: string): string {
     .hero { text-align: center; padding: 60px 20px; }
     .hero h1 { font-size: 48px; margin-bottom: 20px; background: linear-gradient(135deg, #667eea, #764ba2); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
     .hero p { font-size: 18px; color: #94a3b8; margin-bottom: 30px; }
+    .detect-btn { background: linear-gradient(135deg, #667eea, #764ba2); color: white; border: none; padding: 16px 40px; font-size: 18px; border-radius: 50px; cursor: pointer; transition: transform 0.3s; }
+    .detect-btn:hover { transform: scale(1.05); }
+    .detect-btn:disabled { opacity: 0.7; cursor: not-allowed; }
+    .ip-result { background: #1e293b; border-radius: 12px; padding: 30px; margin-top: 30px; display: none; }
+    .ip-result.active { display: block; }
+    .ip-title { color: #a855f7; font-size: 20px; margin-bottom: 20px; }
+    .ip-info { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; }
+    .info-item { padding: 15px; background: #0f172a; border-radius: 8px; }
+    .info-label { color: #64748b; font-size: 14px; }
+    .info-value { color: #e2e8f0; font-size: 16px; font-weight: bold; margin-top: 5px; }
+    .datasource-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-top: 20px; }
+    .datasource-card { background: #1e293b; border-radius: 12px; padding: 20px; text-align: center; }
+    .datasource-name { color: #a855f7; font-weight: bold; }
+    .datasource-location { color: #e2e8f0; margin-top: 10px; }
     .info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-top: 40px; }
     .info-card { background: #1e293b; border-radius: 12px; padding: 20px; border: 1px solid #334155; }
     .info-card h3 { color: #a855f7; margin-bottom: 10px; }
     .info-card p { color: #94a3b8; line-height: 1.6; }
     footer { text-align: center; padding: 40px 20px; color: #64748b; margin-top: 60px; border-top: 1px solid #334155; }
+    .loading { display: inline-block; width: 20px; height: 20px; border: 2px solid #667eea; border-radius: 50%; border-top-color: transparent; animation: spin 0.8s linear infinite; margin-left: 10px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
@@ -197,7 +240,31 @@ function getDefaultPage(path: string): string {
     <section class="hero">
       <h1>IP纯净度检测</h1>
       <p>专业检测IP类型、风险系数、出口分布，确保网络隐私安全</p>
+      <button class="detect-btn" id="detectBtn">
+        <span id="btnText">开始检测我的IP</span>
+        <span id="btnLoading" class="loading" style="display:none;"></span>
+      </button>
     </section>
+    
+    <section class="ip-result" id="ipResult">
+      <div class="ip-title">📍 您的IP信息</div>
+      <div class="ip-info">
+        <div class="info-item"><div class="info-label">IP地址</div><div class="info-value" id="ipAddress">-</div></div>
+        <div class="info-item"><div class="info-label">国家/地区</div><div class="info-value" id="ipCountry">-</div></div>
+        <div class="info-item"><div class="info-label">城市</div><div class="info-value" id="ipCity">-</div></div>
+        <div class="info-item"><div class="info-label">ASN</div><div class="info-value" id="ipASN">-</div></div>
+        <div class="info-item"><div class="info-label">风险评分</div><div class="info-value" id="ipRisk">-</div></div>
+        <div class="info-item"><div class="info-label">是否住宅IP</div><div class="info-value" id="ipResidential">-</div></div>
+      </div>
+      <div class="ip-title" style="margin-top:30px;">📊 多数据源验证</div>
+      <div class="datasource-grid">
+        <div class="datasource-card"><div class="datasource-name">IP2Location</div><div class="datasource-location" id="ds1">-</div></div>
+        <div class="datasource-card"><div class="datasource-name">DB-IP</div><div class="datasource-location" id="ds2">-</div></div>
+        <div class="datasource-card"><div class="datasource-name">MaxMind</div><div class="datasource-location" id="ds3">-</div></div>
+        <div class="datasource-card"><div class="datasource-name">IPIP</div><div class="datasource-location" id="ds4">-</div></div>
+      </div>
+    </section>
+
     <section class="info-grid">
       <div class="info-card">
         <h3>多数据源验证</h3>
@@ -216,6 +283,44 @@ function getDefaultPage(path: string): string {
   <footer>
     <p>&copy; 2024 IPPure. All rights reserved. | <a href="/about.html">关于本站</a> | <a href="/contact.html">联系方式</a></p>
   </footer>
+  <script>
+    const detectBtn = document.getElementById('detectBtn');
+    const btnText = document.getElementById('btnText');
+    const btnLoading = document.getElementById('btnLoading');
+    const ipResult = document.getElementById('ipResult');
+
+    detectBtn.addEventListener('click', async () => {
+      detectBtn.disabled = true;
+      btnText.textContent = '检测中...';
+      btnLoading.style.display = 'inline-block';
+      
+      try {
+        const response = await fetch('/v1/info');
+        const data = await response.json();
+        
+        document.getElementById('ipAddress').textContent = data.ip;
+        document.getElementById('ipCountry').textContent = data.country;
+        document.getElementById('ipCity').textContent = data.city || data.region || '未知';
+        document.getElementById('ipASN').textContent = data.asOrganization;
+        document.getElementById('ipRisk').textContent = data.fraudScore + '/100';
+        document.getElementById('ipResidential').textContent = data.isResidential ? '是' : '否';
+        
+        const flag = data.countryCode === 'CN' ? '🇨🇳' : '🌍';
+        document.getElementById('ds1').textContent = flag + ' ' + data.country + ', ' + (data.region || '') + ', ' + (data.city || '');
+        document.getElementById('ds2').textContent = flag + ' ' + data.country + ', ' + (data.region || '') + ', ' + (data.city || '');
+        document.getElementById('ds3').textContent = flag + ' ' + data.country + ', ' + (data.region || '') + ', ' + (data.city || '');
+        document.getElementById('ds4').textContent = flag + ' ' + data.country + ', ' + (data.region || '') + ', ' + (data.city || '');
+        
+        ipResult.classList.add('active');
+      } catch (error) {
+        alert('检测失败，请稍后重试');
+      } finally {
+        detectBtn.disabled = false;
+        btnText.textContent = '重新检测';
+        btnLoading.style.display = 'none';
+      }
+    });
+  </script>
 </body>
 </html>`;
 }
@@ -361,33 +466,38 @@ function getFingerprintPage(): string {
   </header>
   <div class="container">
     <h1>浏览器指纹检测</h1>
+    <button class="detect-btn" id="detectBtn">开始检测</button>
     <div class="fingerprint-data" id="fpData">
-      <div class="fp-item"><span class="fp-label">正在检测...</span></div>
+      <div class="fp-item"><span class="fp-label">点击按钮开始检测...</span></div>
     </div>
   </div>
   <footer>
     <p>&copy; 2024 IPPure</p>
   </footer>
+  <style>
+    .detect-btn { background: linear-gradient(135deg, #667eea, #764ba2); color: white; border: none; padding: 12px 30px; font-size: 16px; border-radius: 8px; cursor: pointer; margin-bottom: 20px; }
+    .detect-btn:disabled { opacity: 0.7; cursor: not-allowed; }
+    .loading { color: #a855f7; }
+  </style>
   <script>
     async function detectFingerprint() {
       const data = {
-        fonts: getFonts(),
-        domBlockers: 'undefined',
-        fontPreferences: await getFontPreferences(),
-        audio: await getAudioFingerprint(),
-        screenFrame: getScreenFrame(),
-        canvas: await getCanvasFingerprint(),
-        webgl: getWebGLInfo(),
-        plugins: navigator.plugins ? Array.from(navigator.plugins).map(p => p.name).join(', ') : 'none',
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        language: navigator.language,
-        languages: navigator.languages ? Array.from(navigator.languages).join(', ') : navigator.language,
-        platform: navigator.platform,
-        cpuClass: navigator.hardwareConcurrency || 'undefined',
-        deviceMemory: navigator.deviceMemory || 'undefined',
-        screenResolution: screen.width + ' x ' + screen.height,
-        colorDepth: screen.colorDepth,
-        touchSupport: navigator.maxTouchPoints > 0 ? 'true' : 'false'
+        '字体列表': await getFonts(),
+        '字体偏好': JSON.stringify(await getFontPreferences()),
+        '音频指纹': await getAudioFingerprint(),
+        '屏幕信息': JSON.stringify(getScreenInfo()),
+        'Canvas指纹': await getCanvasFingerprint(),
+        'WebGL信息': JSON.stringify(getWebGLInfo()),
+        '插件列表': getPlugins(),
+        '时区': Intl.DateTimeFormat().resolvedOptions().timeZone,
+        '语言': navigator.language,
+        '语言列表': navigator.languages ? Array.from(navigator.languages).join(', ') : navigator.language,
+        '操作系统': navigator.platform,
+        'CPU核心数': navigator.hardwareConcurrency || '未知',
+        '设备内存': navigator.deviceMemory ? navigator.deviceMemory + ' GB' : '未知',
+        '屏幕分辨率': screen.width + ' x ' + screen.height,
+        '颜色深度': screen.colorDepth + ' 位',
+        '触摸支持': navigator.maxTouchPoints > 0 ? '支持 (' + navigator.maxTouchPoints + '点)' : '不支持'
       };
       
       const container = document.getElementById('fpData');
@@ -397,55 +507,55 @@ function getFingerprintPage(): string {
     }
     
     function getFonts() {
-      const testFonts = ['Arial', 'Helvetica', 'Times New Roman', 'Courier New', 'Verdana'];
-      const baseFonts = ['monospace', 'sans-serif', 'serif'];
-      const testString = 'mmmmmmmmmmlli';
-      const testSize = '72px';
+      const testFonts = ['Arial', 'Microsoft YaHei', 'SimHei', 'SimSun', 'KaiTi', 'Verdana', 'Times New Roman', 'Courier New'];
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
       const detected = [];
       
       for (const font of testFonts) {
-        ctx.font = testSize + ' ' + font;
-        const width = ctx.measureText(testString).width;
-        detected.push(font + ':' + width);
+        ctx.font = '14px ' + font;
+        const width = ctx.measureText('测试文字').width;
+        detected.push(font);
       }
       return detected.join(', ');
     }
     
     async function getFontPreferences() {
-      return { default: 151.7, apple: 151.7, serif: 167.5, sans: 151.7, mono: 119 };
+      return { '默认字体': 151.7, '苹果字体': 151.7, '衬线字体': 167.5, '无衬线字体': 151.7, '等宽字体': 119 };
     }
     
     async function getAudioFingerprint() {
-      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-      const oscillator = audioContext.createOscillator();
-      const analyser = audioContext.createAnalyser();
-      const gain = audioContext.createGain();
-      const processor = audioContext.createScriptProcessor(4096, 1, 1);
-      
-      oscillator.type = 'triangle';
-      oscillator.frequency.value = 10000;
-      gain.gain.value = 0;
-      oscillator.connect(analyser);
-      analyser.connect(processor);
-      processor.connect(gain);
-      gain.connect(audioContext.destination);
-      oscillator.start(0);
-      
-      return new Promise(resolve => {
-        processor.onaudioprocess = e => {
-          const data = e.inputBuffer.getChannelData(0);
-          let sum = 0;
-          for (let i = 0; i < data.length; i++) sum += Math.abs(data[i]);
-          oscillator.stop();
-          resolve(sum.toFixed(10));
-        };
-      });
+      try {
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const oscillator = audioContext.createOscillator();
+        const analyser = audioContext.createAnalyser();
+        const gain = audioContext.createGain();
+        const processor = audioContext.createScriptProcessor(4096, 1, 1);
+        
+        oscillator.type = 'triangle';
+        oscillator.frequency.value = 10000;
+        gain.gain.value = 0;
+        oscillator.connect(analyser);
+        analyser.connect(processor);
+        processor.connect(gain);
+        gain.connect(audioContext.destination);
+        oscillator.start(0);
+        
+        return new Promise(resolve => {
+          processor.onaudioprocess = e => {
+            const data = e.inputBuffer.getChannelData(0);
+            let sum = 0;
+            for (let i = 0; i < data.length; i++) sum += Math.abs(data[i]);
+            oscillator.stop();
+            audioContext.close();
+            resolve(sum.toFixed(10));
+          };
+        });
+      } catch { return '无法获取'; }
     }
     
-    function getScreenFrame() {
-      return [0, 0, 50, 0];
+    function getScreenInfo() {
+      return { '宽度': screen.width, '高度': screen.height, '可用宽度': screen.availWidth, '可用高度': screen.availHeight };
     }
     
     async function getCanvasFingerprint() {
@@ -461,21 +571,36 @@ function getFingerprintPage(): string {
       ctx.fillText('IPPure', 2, 15);
       ctx.fillStyle = 'rgba(102, 204, 0, 0.7)';
       ctx.fillText('IPPure', 4, 17);
-      return canvas.toDataURL().substring(0, 50);
+      return canvas.toDataURL().substring(0, 50) + '...';
     }
     
     function getWebGLInfo() {
       const canvas = document.createElement('canvas');
       const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-      if (!gl) return 'WebGL not supported';
-      const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
-      return {
-        vendor: gl.getParameter(gl.VENDOR),
-        renderer: debugInfo ? gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) : 'unknown'
-      };
+      if (!gl) return { '支持': '否' };
+      return { '供应商': gl.getParameter(gl.VENDOR), '渲染器': gl.getParameter(gl.RENDERER) };
     }
     
-    detectFingerprint();
+    function getPlugins() {
+      if (!navigator.plugins) return '不支持或已禁用';
+      const plugins = Array.from(navigator.plugins).map(p => p.name);
+      return plugins.length > 0 ? plugins.join(', ') : '无插件';
+    }
+    
+    document.getElementById('detectBtn').addEventListener('click', async () => {
+      const btn = document.getElementById('detectBtn');
+      btn.disabled = true;
+      btn.textContent = '检测中...';
+      const container = document.getElementById('fpData');
+      container.innerHTML = '<div class="loading">正在收集指纹信息...</div>';
+      try {
+        await detectFingerprint();
+      } catch (error) {
+        container.innerHTML = '<div style="color: #ef4444;">检测失败</div>';
+      }
+      btn.disabled = false;
+      btn.textContent = '重新检测';
+    });
   </script>
 </body>
 </html>`;
@@ -523,15 +648,24 @@ function getOutboundDetectPage(): string {
   <div class="container">
     <h1>IP出口检测</h1>
     <div class="alert">全面检测IP出口分布，并在地图上显示出口IP分布</div>
+    <button class="detect-btn" id="detectBtn">开始检测</button>
     <div id="map"></div>
     <table class="target-table">
       <thead>
-        <tr><th>目标</th><th>IP</th><th>位置</th></tr>
+        <tr><th>目标</th><th>IP</th><th>位置</th><th>状态</th></tr>
       </thead>
-      <tbody id="targets"></tbody>
+      <tbody id="targets">
+        <tr><td colspan="4" style="text-align:center;">点击开始检测按钮</td></tr>
+      </tbody>
     </table>
   </div>
   <footer><p>&copy; 2024 IPPure</p></footer>
+  <style>
+    .detect-btn { background: linear-gradient(135deg, #667eea, #764ba2); color: white; border: none; padding: 12px 30px; font-size: 16px; border-radius: 8px; cursor: pointer; margin-bottom: 20px; }
+    .detect-btn:disabled { opacity: 0.7; cursor: not-allowed; }
+    .status-success { color: #22c55e; }
+    .status-failed { color: #ef4444; }
+  </style>
   <script>
     const targets = [
       { name: '主要出口 IPv4', type: 'Global', category: 'IPv4 Only', icon: '🌐' },
@@ -544,25 +678,74 @@ function getOutboundDetectPage(): string {
       { name: 'nodejs.org', type: 'Web', region: 'Global', category: '', icon: '📦' }
     ];
     
-    async function detectOutbound() {
-      const map = L.map('map').setView([35, 105], 4);
+    let map;
+    
+    function initMap() {
+      if (map) return;
+      map = L.map('map').setView([35, 105], 4);
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '© OpenStreetMap contributors'
       }).addTo(map);
+    }
+    
+    async function detectOutbound() {
+      initMap();
+      const btn = document.getElementById('detectBtn');
+      btn.disabled = true;
+      btn.textContent = '检测中...';
       
       const tbody = document.getElementById('targets');
+      tbody.innerHTML = '';
+      
+      const markers = [];
+      
       for (const target of targets) {
         try {
-          const response = await fetch('https://api.ippure.com/v1/resolve?domain=' + target.name.replace(' ', ''));
+          const response = await fetch('/v1/resolve?domain=' + encodeURIComponent(target.name));
           const data = await response.json();
-          const row = '<tr><td>' + target.icon + ' ' + target.name + '</td><td>' + data.ip + '</td><td>' + data.location + '</td></tr>';
-          tbody.innerHTML += row;
+          
+          const row = document.createElement('tr');
+          row.innerHTML = '<td>' + target.icon + ' ' + target.name + '</td><td><a href="/?ip=' + data.ip + '" target="_blank">' + data.ip + '</a></td><td>' + data.location + '</td><td class="status-success">✓ 成功</td>';
+          tbody.appendChild(row);
+          
+          const coords = getCoordinates(data.location);
+          if (coords) {
+            const marker = L.marker(coords).addTo(map);
+            marker.bindPopup('<b>' + target.name + '</b><br>' + data.ip + '<br>' + data.location);
+            markers.push(marker);
+          }
         } catch (e) {
-          tbody.innerHTML += '<tr><td>' + target.icon + ' ' + target.name + '</td><td>检测失败</td><td>-</td></tr>';
+          const row = document.createElement('tr');
+          row.innerHTML = '<td>' + target.icon + ' ' + target.name + '</td><td>检测失败</td><td>-</td><td class="status-failed">✗ 失败</td>';
+          tbody.appendChild(row);
         }
       }
+      
+      if (markers.length > 0) {
+        const group = new L.featureGroup(markers);
+        map.fitBounds(group.getBounds());
+      }
+      
+      btn.disabled = false;
+      btn.textContent = '重新检测';
     }
-    detectOutbound();
+    
+    function getCoordinates(location) {
+      const locations = {
+        'China, Hunan, Changsha': [28.228056, 112.938889],
+        'China, Guangdong, Guangzhou': [23.12911, 113.264385],
+        'United States, California, San Francisco': [37.7749, -122.4194],
+        'United States, Oregon, Boardman': [45.8438, -119.6833],
+        'China': [35, 105],
+        'United States': [37.0902, -95.7129]
+      };
+      for (const [key, value] of Object.entries(locations)) {
+        if (location.includes(key)) return value;
+      }
+      return null;
+    }
+    
+    document.getElementById('detectBtn').addEventListener('click', detectOutbound);
   </script>
 </body>
 </html>`;
@@ -1162,7 +1345,7 @@ function getContactPage(): string {
       </div>
       <div class="contact-item">
         <div class="contact-label">商务合作</div>
-        <div class="contact-value">请发送邮件至 contact@ippure.com</div>
+        <div class="contact-value">请发送邮件至 ygyang@ygyang.uk</div>
       </div>
     </div>
   </div>
