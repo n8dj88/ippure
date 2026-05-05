@@ -273,6 +273,41 @@ cloud-mail D1 数据库中的 `user` 表结构：
    - 确认用户 ID 是否正确传递
    - 检查浏览器控制台是否有错误
 
+4. **D1 数据库绑定错误**
+   - **错误信息**："添加绑定失败：发生未知错误"
+   - **API 错误**：POST `/api/v4/accounts/.../workers/scripts/ippure/versions` 返回 403
+   
+   **解决方法**：
+   
+   1. **权限问题**：
+      - 确保有访问 cloud-mail D1 数据库的权限
+      - 检查账户权限级别
+      - 确认在同一个 Cloudflare 账户内
+   
+   2. **直接在 Dashboard 绑定**：
+      - 访问：https://dash.cloudflare.com/[你的账户ID]/workers/services/view/ippure/production/bindings
+      - 在 "D1 Database Bindings" 部分点击 "Add binding"
+      - 变量名填：`db`
+      - 选择数据库：`cnmailcn`（或你实际的数据库名称）
+      - 点击 "Save and Deploy"
+   
+   3. **使用 wrangler CLI 绑定**：
+      ```bash
+      # 先列出可访问的D1数据库
+      npx wrangler d1 list
+      
+      # 确认数据库ID和名称
+      # 然后在 wrangler.toml 中配置（可选）
+      ```
+   
+   4. **共享权限**：
+      - 如果数据库在另一个账户，需要请求共享访问
+      - 使用 Cloudflare Resource Access 授予权限
+      - 或者将两个项目放在同一个账户内
+   
+   5. **验证绑定**：
+      部署成功后可以测试登录功能验证数据库连接是否正常
+
 ## 许可证
 
 MIT License
