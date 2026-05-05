@@ -6,3 +6,4 @@ compatibility_flags = ["nodejs_compat"]
 [[d1_databases]]
 binding = "db"
 database_name = "cnmailcn"
+database_id = "${D1_DATABASE_ID}"
