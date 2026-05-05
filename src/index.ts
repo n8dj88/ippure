@@ -1360,31 +1360,28 @@ function getLeakDetectPage(): string {
   </div>
   <footer><p>&copy; 2024 IPPure</p></footer>
   <script>
-    document.getElementById('detectBtn').addEventListener('click', async () => {
-      const btn = document.getElementById('detectBtn');
+    document.getElementById('detectBtn').addEventListener('click', function() {
+      var btn = this;
       btn.disabled = true;
       btn.textContent = '检测中...';
       
       document.getElementById('leakTest').style.display = 'block';
-      
-      await new Promise(resolve => setTimeout(resolve, 500));
+      document.getElementById('webrtcResult').textContent = '-';
+      document.getElementById('dnsResult').textContent = '-';
+      document.getElementById('outboundResult').textContent = '-';
+      document.getElementById('geoResult').textContent = '-';
+      document.getElementById('vpnStatus').textContent = '-';
       
       detectWebRTC();
-      await new Promise(resolve => setTimeout(resolve, 800));
-      
       detectDNS();
-      await new Promise(resolve => setTimeout(resolve, 600));
-      
       detectOutbound();
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
       detectGeo();
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
       detectVPNStatus();
       
-      btn.disabled = false;
-      btn.textContent = '重新检测';
+      setTimeout(function() {
+        btn.disabled = false;
+        btn.textContent = '重新检测';
+      }, 3000);
     });
     
     async function detectWebRTC() {
@@ -1430,9 +1427,7 @@ function getLeakDetectPage(): string {
           // 如果没有检测到泄露，检查特定的泄露IP
           if (leakedIPs.length === 0) {
             // 检查是否存在已知的泄露IP
-            const knownLeakIP = '104.28.152.173';
-            // 模拟检测到这个泄露IP
-            result.textContent = ' ⚠️ IPv4泄露 (' + knownLeakIP + ')';
+            
             result.className = 'test-result result-risk';
           }
           pc.close();
